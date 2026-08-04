@@ -97,12 +97,13 @@ for i in ids + [weird["id"], empty["id"]]:
     m.delete_record("ideas", i)
 
 print("\n=== 4. 路径安全：各种穿越写法 ===")
-dev = m.get_device(); dev["paper_root"] = "/tmp/pdfs"; m._save_json(m.DEVICE_PATH, dev)
+paper_root = Path(tempfile.mkdtemp(prefix="scholar-workspace-pdfs-"))
+dev = m.get_device(); dev["paper_root"] = str(paper_root); m._save_json(m.DEVICE_PATH, dev)
 m._CACHE if hasattr(m, "_CACHE") else None
-ATTACKS = ["/etc/passwd", "../../../etc/passwd", "/tmp/pdfs/../../etc/passwd",
-           "/tmp/pdfs/./../../etc/shadow", "~/../../etc/passwd",
+ATTACKS = ["/etc/passwd", "../../../etc/passwd", str(paper_root / "../../etc/passwd"),
+           str(paper_root / "./../../etc/shadow"), "~/../../etc/passwd",
            "/proc/self/environ",
-           "//etc/passwd", "/tmp/pdfs/\x00/etc/passwd"]
+           "//etc/passwd", str(paper_root) + "/\x00/etc/passwd"]
 blocked = 0
 for a in ATTACKS:
     try:
@@ -114,14 +115,15 @@ for a in ATTACKS:
     else:
         print(f"      ⚠ 未拦截: {a} -> {r}")
 check(f"{len(ATTACKS)} 种穿越全部拦截", blocked == len(ATTACKS), f"拦下 {blocked}")
-check("白名单内正常放行", m.safe_path("/tmp/pdfs/paper1.pdf") is not None)
+check("白名单内正常放行", m.safe_path(str(paper_root / "paper1.pdf")) is not None)
 # 符号链接逃逸
-link = Path("/tmp/pdfs/escape")
+link = paper_root / "escape"
 if link.exists() or link.is_symlink():
     link.unlink()
 os.symlink("/etc", link)
-check("符号链接逃逸被拦截", m.safe_path("/tmp/pdfs/escape/passwd") is None)
+check("符号链接逃逸被拦截", m.safe_path(str(link / "passwd")) is None)
 link.unlink()
+shutil.rmtree(paper_root, ignore_errors=True)
 
 print("\n=== 5. 文件名净化 ===")
 for raw, must_not in [("../../evil.csv", ".."), ("..\\..\\evil.csv", ".."),
