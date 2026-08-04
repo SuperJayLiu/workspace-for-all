@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学术工作台 · 访问码</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+  background:#f6f7f9;color:#1b1d21;
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+@media (prefers-color-scheme:dark){body{background:#14171d;color:#e6e8ec}
+  .box{background:#1b1f27;border-color:#2a3039}input{background:#14171d;color:#e6e8ec;border-color:#2a3039}}
+.box{width:100%;max-width:380px;background:#fff;border:1px solid #e3e6ea;border-radius:14px;padding:26px 24px}
+h1{font-size:18px;margin:0 0 6px}
+p{font-size:13px;color:#7a828e;margin:0 0 18px}
+input{width:100%;padding:11px 13px;font-size:17px;border:1px solid #e3e6ea;border-radius:9px;
+  letter-spacing:.14em;text-align:center}
+button{width:100%;margin-top:12px;padding:11px;font-size:15px;border:0;border-radius:9px;
+  background:#3b5bdb;color:#fff;cursor:pointer}
+button:disabled{opacity:.55;cursor:default}
+.msg{margin-top:12px;font-size:13px;min-height:20px;color:#e03131}
+.note{margin-top:16px;font-size:12px;color:#9aa2ad;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>需要访问码</h1>
+  <p>你正从别的设备连接这台电脑上的工作台。</p>
+  <input id="code" type="password" inputmode="numeric" autocomplete="one-time-code"
+         placeholder="访问码" autofocus>
+  <button id="go">进入</button>
+  <div class="msg" id="msg"></div>
+  <div class="note">进入后默认<b>只读</b>：可以看，不能改。要改东西，在页面右上角点「解锁写入」再输一次访问码，
+    解锁有效 30 分钟。访问码只存在那台电脑上，不进云端也不进备份。</div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+async function submit(){
+  const code = $('#code').value.trim();
+  if(!code) return;
+  $('#go').disabled = true; $('#msg').textContent = '';
+  try{
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code}), credentials: 'same-origin'});
+    const j = await r.json().catch(() => ({}));
+    if(r.ok && j.ok){ location.href = '/'; return; }
+    $('#msg').textContent = j.error || ('登录失败 (HTTP ' + r.status + ')');
+  }catch(e){
+    $('#msg').textContent = '连不上工作台：' + e.message;
+  }
+  $('#go').disabled = false;
+  $('#code').select();
+}
+$('#go').onclick = submit;
+$('#code').addEventListener('keydown', e => { if(e.key === 'Enter') submit(); });
+</script>
+</body>
+</html>

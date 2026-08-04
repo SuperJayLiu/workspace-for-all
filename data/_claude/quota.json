@@ -1,0 +1,14 @@
+{
+  "rate_per_week": 14.0,
+  "week_start": "",
+  "spent_this_week": 0.0,
+  "history": [],
+  "runs": [],
+  "blocked_events": [],
+  "activity": {},
+  "overrides": {
+    "tonight_boost": false,
+    "silent_week": false
+  },
+  "unread_reports": 0
+}

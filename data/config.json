@@ -1,0 +1,277 @@
+{
+  "owner": "",
+  "sections": [
+    "today",
+    "hub",
+    "papers",
+    "conferences",
+    "reading",
+    "ideas",
+    "schedule",
+    "life",
+    "ai",
+    "settings"
+  ],
+  "theme": {
+    "accent": "#3b5bdb",
+    "mode": "light",
+    "density": "comfortable"
+  },
+  "today_horizon_days": 45,
+  "stale_manuscript_days": 7,
+  "reading": {
+    "weekly_goal": 5,
+    "xp": {
+      "skim": 1,
+      "deep": 3,
+      "critical": 5
+    },
+    "review_days": [
+      1,
+      7,
+      30,
+      90
+    ],
+    "manager": "zotero"
+  },
+  "autotasks": {
+    "enabled": true,
+    "kinds": [
+      "brainstorm",
+      "gap-scan",
+      "method-scan",
+      "data-scan",
+      "audit",
+      "github-radar",
+      "lit-radar"
+    ],
+    "max_items_per_run": 3,
+    "unread_pause_threshold": 3
+  },
+  "tutorial_dismissed": {},
+  "brand": {
+    "title": "学术工作台",
+    "sub": "Scholar Workspace"
+  },
+  "hide_samples": false,
+  "card_opts": {},
+  "setup": {
+    "done": false,
+    "step": 0,
+    "completed_at": ""
+  },
+  "profile": {
+    "name": "",
+    "city": "",
+    "lat": null,
+    "lon": null,
+    "field": "",
+    "keywords": []
+  },
+  "calendar": {
+    "ics": [],
+    "refresh_min": 15,
+    "lunar": true,
+    "weather": true
+  },
+  "ai": {
+    "default_jump": "claude",
+    "plan": "max5",
+    "reset_hint": "",
+    "work_start": "09:00",
+    "work_end": "23:00"
+  },
+  "push": {
+    "weekly_cron": "MON 08:00",
+    "daily_brief": false,
+    "channels": {
+      "dingtalk": false,
+      "email": false,
+      "custom": false
+    }
+  },
+  "security": {
+    "remote_enabled": false,
+    "remote_readonly": true,
+    "encrypt_backup": false
+  },
+  "quicklinks": [
+    {
+      "name": "打开 Claude",
+      "url": "https://claude.ai/new",
+      "color": "#c96442",
+      "letter": "C",
+      "group": "AI",
+      "app": "claude://"
+    },
+    {
+      "name": "打开 ChatGPT",
+      "url": "https://chatgpt.com/",
+      "color": "#10a37f",
+      "letter": "G",
+      "group": "AI",
+      "app": "chatgpt://"
+    },
+    {
+      "name": "Google Scholar",
+      "url": "https://scholar.google.com/",
+      "color": "#4285f4",
+      "letter": "S",
+      "group": "学术"
+    },
+    {
+      "name": "Overleaf",
+      "url": "https://www.overleaf.com/project",
+      "color": "#7048e8",
+      "letter": "O",
+      "group": "学术"
+    },
+    {
+      "name": "SSRN",
+      "url": "https://www.ssrn.com/index.cfm/en/",
+      "color": "#0b5394",
+      "letter": "R",
+      "group": "学术"
+    }
+  ],
+  "layout": {
+    "rail_split": 0.55,
+    "rail_collapsed": {
+      "calendar": false,
+      "memo": false
+    },
+    "card_order": {},
+    "hidden_cards": []
+  },
+  "lib_folders": [],
+  "radar": {
+    "keywords": [],
+    "people": [],
+    "sources": [
+      "crossref",
+      "nber",
+      "arxiv"
+    ],
+    "per_keyword": 12,
+    "mailto": ""
+  },
+  "a": {
+    "a": {
+      "a": {
+        "a": {
+          "a": {
+            "a": {
+              "a": {
+                "a": {
+                  "a": {
+                    "a": {
+                      "a": {
+                        "a": {
+                          "a": {
+                            "a": {
+                              "a": {
+                                "a": {
+                                  "a": {
+                                    "a": {
+                                      "a": {
+                                        "a": {
+                                          "a": {
+                                            "a": {
+                                              "a": {
+                                                "a": {
+                                                  "a": {
+                                                    "a": {
+                                                      "a": {
+                                                        "a": {
+                                                          "a": {
+                                                            "a": {
+                                                              "a": {
+                                                                "a": {
+                                                                  "a": {
+                                                                    "a": {
+                                                                      "a": {
+                                                                        "a": {
+                                                                          "a": {
+                                                                            "a": {
+                                                                              "a": {
+                                                                                "a": {
+                                                                                  "a": {
+                                                                                    "a": {
+                                                                                      "a": {
+                                                                                        "a": {
+                                                                                          "a": {
+                                                                                            "a": {
+                                                                                              "a": {
+                                                                                                "a": {
+                                                                                                  "a": {
+                                                                                                    "a": {
+                                                                                                      "a": {
+                                                                                                        "a": {
+                                                                                                          "a": {
+                                                                                                            "a": {
+                                                                                                              "a": {
+                                                                                                                "a": {
+                                                                                                                  "a": {
+                                                                                                                    "a": {
+                                                                                                                      "a": {
+                                                                                                                        "a": 1
+                                                                                                                      }
+                                                                                                                    }
+                                                                                                                  }
+                                                                                                                }
+                                                                                                              }
+                                                                                                            }
+                                                                                                          }
+                                                                                                        }
+                                                                                                      }
+                                                                                                    }
+                                                                                                  }
+                                                                                                }
+                                                                                              }
+                                                                                            }
+                                                                                          }
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# 只同步学术数据；生活数据、密钥、备份、导入缓存一律留在本机
+local/
+attachments/
+*.zip
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.tmp*
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+node_modules/
+.idea/
+.vscode/
+
+# 更新与清理用的临时目录：绝不能进仓库
+_to_delete/
+_stage/
+_st*/
+_u/
+_u2/
+_restore/
+_backup_*/
+portal.html

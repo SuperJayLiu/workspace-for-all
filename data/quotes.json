@@ -1,0 +1,84 @@
+{
+  "quotes": [
+    {
+      "id": "default-zh-1",
+      "t": "先写下一个可验证的问题，再寻找答案。",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-zh-2",
+      "t": "Markdown 是记录，Git 是历史，浏览器是界面。",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-en-1",
+      "t": "Start with a question you can test.",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-en-2",
+      "t": "Readable data is durable data.",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-zh-3",
+      "t": "把大问题拆成今天能完成的一小步。",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-zh-4",
+      "t": "可复现的过程，才是可靠的结果。",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-zh-5",
+      "t": "记录下一步，让明天更容易开始。",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-en-3",
+      "t": "Small, reproducible steps build reliable research.",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-en-4",
+      "t": "Write down the next step before you stop.",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    },
+    {
+      "id": "default-en-5",
+      "t": "Clear notes make future work easier.",
+      "s": "Scholar Workspace",
+      "y": "",
+      "tag": "classic",
+      "fav": false
+    }
+  ]
+}

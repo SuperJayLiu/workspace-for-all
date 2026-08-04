@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#3b5bdb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="工作台">
+<title>学术工作台 · Scholar Workspace</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'><rect width='44' height='44' rx='12' fill='%235b7cfa'/><path d='M27.5 10.5v14.2c0 5.4-3.4 8.6-8.4 8.6-3.6 0-6.3-1.6-7.6-4.2l3.6-2.4c.8 1.6 2.1 2.5 3.8 2.5 2.4 0 3.9-1.6 3.9-4.6V14.4h-5.6v-3.9z' fill='white'/></svg>">
+</head>
+<body>
+<div id="app" class="app">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark" title="Second J">
+        <svg viewBox="0 0 44 44" aria-label="J">
+          <defs><linearGradient id="jg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#5b7cfa"/><stop offset="1" stop-color="#8b5cf6"/>
+          </linearGradient></defs>
+          <rect x="0" y="0" width="44" height="44" rx="12" fill="url(#jg)"/>
+          <path d="M27.5 10.5v14.2c0 5.4-3.4 8.6-8.4 8.6-3.6 0-6.3-1.6-7.6-4.2l3.6-2.4c.8 1.6 2.1 2.5 3.8 2.5 2.4 0 3.9-1.6 3.9-4.6V14.4h-5.6v-3.9z"
+                fill="#fff"/>
+          <path d="M9.5 34.5c7-2.2 17-3.4 25.5-2.2" stroke="rgba(255,255,255,.55)"
+                stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title" id="brandTitle">学术工作台</div>
+        <div class="brand-sub" id="brandSub">Scholar Workspace</div>
+      </div>
+    </div>
+    <nav id="nav" class="nav"></nav>
+    <div class="sidebar-foot">
+      <div class="sync-chip" id="syncChip" title="点击同步">
+        <span class="dot" id="syncDot"></span><span id="syncText">本地模式</span>
+      </div>
+      <div class="sidebar-meta" id="deviceMeta"></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn only-mobile" id="menuBtn" title="菜单">☰</button>
+      <div class="search-wrap">
+        <input id="globalSearch" class="search" placeholder="搜索全部 · Cmd/Ctrl+K">
+        <div class="search-results" id="searchResults" hidden></div>
+      </div>
+      <div class="qlinks" id="qlinks"></div>
+      <div class="topbar-actions">
+        <button class="btn lock-btn" id="unlockBtn" hidden title="远程当前只读，点此解锁写入">🔒 只读</button>
+        <button class="btn ghost" id="captureBtn" title="快速捕捉（按 c）">⚡ 捕捉</button>
+        <button class="btn ghost" id="claudeBtn" title="写给 Claude">🤖 信箱</button>
+        <button class="btn ghost" id="calBtnTop" title="日历" hidden>📅</button>
+        <button class="btn ghost" id="editBtn" title="调整布局：拖动排序、隐藏卡片、改标题">🎛 布局</button>
+        <button class="btn ghost" id="themeBtn" title="切换深色 / 浅色">◐ 主题</button>
+      </div>
+    </header>
+    <div class="body">
+      <main id="view" class="view"><div class="loading">正在载入…</div></main>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="modal-back" id="modalBack" hidden><div class="modal" id="modal"></div></div>
+<div class="editbar" id="editbar" hidden>🎛 布局编辑中：拖 ⠿ 排序 · 点 👁 隐藏 · 点 ⚙ 改标题/限制条数/加备注 · 拖右栏边缘改宽度
+  <button class="eb-done" id="ebDone">完成</button>
+  <button class="eb-reset" id="ebReset">恢复默认</button></div>
+
+<script src="/js/lunar.js"></script>
+<script src="/js/core.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/capture.js"></script>
+<script src="/js/quotes.js"></script>
+<script src="/js/mod-today.js"></script>
+<script src="/js/mod-academic.js"></script>
+<script src="/js/mod-hub.js"></script>
+<script src="/js/palette.js"></script>
+<script src="/js/mod-library.js"></script>
+<script src="/js/mod-knowledge.js"></script>
+<script src="/js/mod-schedule.js"></script>
+<script src="/js/mod-life.js"></script>
+<script src="/js/mod-ai.js"></script>
+<script src="/js/mod-settings.js"></script>
+<script src="/js/rail.js"></script>
+<script src="/js/layout.js"></script>
+<script src="/js/dock.js"></script>
+<script src="/js/wizard.js"></script>
+<script src="/js/boot.js"></script>
+</body>
+</html>

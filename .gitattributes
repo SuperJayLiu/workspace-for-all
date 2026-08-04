@@ -1,0 +1,5 @@
+# Windows 的批处理必须是 CRLF 换行，否则在某些 Windows 上会执行出错。
+# git 默认会按平台转换换行符，这里把 .bat 钉死成 CRLF。
+*.bat text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf

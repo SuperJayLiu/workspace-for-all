@@ -1,0 +1,21 @@
+{
+  "name": "学术工作台",
+  "short_name": "工作台",
+  "description": "本地优先的学术与生活工作台",
+  "start_url": "/?pwa=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#3b5bdb",
+  "lang": "zh-CN",
+  "shortcuts": [
+    { "name": "记一笔", "short_name": "速记", "url": "/jot.html",
+      "description": "随手记一条想法、完成、待办" },
+    { "name": "今日", "url": "/?pwa=1#today" },
+    { "name": "读文献", "url": "/?pwa=1#reading" }
+  ],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

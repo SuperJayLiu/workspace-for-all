@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3b5bdb">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>记一笔 · 学术工作台</title>
+<!--
+  手机上的极简速记页。
+
+  为什么单独做一个页面而不是让手机开主界面：
+  主界面要拉 bootstrap、画十几张卡，在手机上又慢又难点；
+  而研究者在手机上想做的事九成只有一件——把刚冒出来的念头记下来，
+  否则走两步就忘了。所以这一页只有一个输入框和一个按钮，
+  离线也能用：没网就先存在手机本地，下次连上自动补交。
+-->
+<style>
+  :root { --accent:#3b5bdb; --ink:#1a1d24; --ink-3:#8a93a3; --line:#e6e9ef; --bg-2:#f6f7fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e8eaef; --ink-3:#8a93a3; --line:#2a2f3a; --bg-2:#171a21; }
+    body { background:#0f1116; }
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+         color:var(--ink); padding:max(16px, env(safe-area-inset-top)) 16px
+         max(16px, env(safe-area-inset-bottom)); }
+  h1 { font-size:19px; margin:4px 0 14px; }
+  h1 small { font-weight:400; color:var(--ink-3); font-size:12px; display:block; margin-top:3px; }
+  textarea { width:100%; min-height:34vh; font-size:17px; padding:13px; border-radius:12px;
+             border:1px solid var(--line); background:transparent; color:inherit; resize:vertical; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  .kinds { display:flex; gap:7px; margin:12px 0; flex-wrap:wrap; }
+  .kinds button { flex:1; min-width:70px; padding:11px 8px; border-radius:10px; font-size:14px;
+                  border:1px solid var(--line); background:transparent; color:inherit; }
+  .kinds button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .go { width:100%; padding:15px; border:0; border-radius:12px; background:var(--accent);
+        color:#fff; font-size:17px; font-weight:600; }
+  .go:disabled { opacity:.5; }
+  .msg { margin-top:12px; font-size:13px; color:var(--ink-3); min-height:20px; }
+  .queue { margin-top:18px; font-size:12px; color:var(--ink-3); }
+  .queue div { padding:7px 0; border-top:1px solid var(--line); }
+  a.back { display:inline-block; margin-top:22px; font-size:13px; color:var(--accent);
+           text-decoration:none; }
+</style>
+</head>
+<body>
+<h1>记一笔
+  <small>只做一件事：把念头存下来。之后在电脑上分类。</small></h1>
+
+<textarea id="txt" autofocus placeholder="想到什么直接写。
+例如：
+· 下周三跟合作者对 Table 5
+· 中介约束那篇能不能换个识别？
+· 读完 He & Krishnamurthy 2013"></textarea>
+
+<div class="kinds" id="kinds">
+  <button data-k="idea" class="on">💡 想法</button>
+  <button data-k="question">❓ 疑问</button>
+  <button data-k="todo">📅 待办</button>
+  <button data-k="done">✅ 完成</button>
+</div>
+
+<button class="go" id="go">存进工作台</button>
+<div class="msg" id="msg"></div>
+<div class="queue" id="queue"></div>
+
+<a class="back" href="/">← 打开完整工作台</a>
+
+<script>
+const $ = s => document.querySelector(s);
+let kind = "idea";
+const QKEY = "jot_pending";
+const QMAX = 200;          // 排到这么多条还没联网，多半是出了别的问题
+
+document.querySelectorAll("#kinds button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#kinds button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); kind = b.dataset.k;
+});
+
+/* 没网就排队。手机上记东西经常发生在地铁、走廊、开会中途，
+   这时候「发不出去 = 白记了」是最伤的。 */
+function pending() { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } }
+/* 存队列。**必须能报告失败** —— 存不下却告诉用户「已经存在手机本地，
+   回到网络里会自动补交」，是这一页最不能犯的错：他会放心地关掉页面。 */
+function setPending(v) {
+  const keep = v.slice(-QMAX);
+  const dropped = v.length - keep.length;
+  try {
+    localStorage.setItem(QKEY, JSON.stringify(keep));
+    return { ok: true, dropped };
+  } catch (e) {
+    return { ok: false, dropped, error: e };
+  }
+}
+
+function showQueue() {
+  const p = pending();
+  $("#queue").innerHTML = p.length
+    ? `<b>还有 ${p.length} 条没送出去</b>（连上网会自动补交）` +
+      p.slice(-5).map(x => `<div>${x.text.slice(0, 40).replace(/</g, "&lt;")}</div>`).join("")
+    : "";
+}
+
+async function send(item) {
+  const r = await fetch("/api/capture", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(item),
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+/* 必须防重入：浏览器自己会发 online 事件，页面里也可能再触发一次，
+   两个 flush 同时跑会把同一条补交两遍（实测就是这么重复的）。
+   而且要**先把队列清空再发**——发送过程中新加进来的不会被这一轮吃掉。 */
+let flushing = false;
+async function flush() {
+  if (flushing) return;
+  const p = pending();
+  if (!p.length) return;
+  flushing = true;
+  let done = 0;
+  try {
+    /* **发一条、摘一条**，而不是先把队列清空再发。
+       手机上补交经常发生在信号很差的时候，页面随时可能被系统回收；
+       先清空的话，那一刻还没发出去的全部人间蒸发 ——
+       而队列存在的全部意义就是「别让它们蒸发」。
+       重复提交的风险由 flushing 这个锁挡住。 */
+    for (let i = 0; i < p.length; i++) {
+      try {
+        await send(p[i]);
+      } catch (e) {
+        break;                    // 一条发不出去，后面的多半也不行，留着下次
+      }
+      done++;
+      setPending(pending().filter(x => x !== p[i] && !(
+        x.at === p[i].at && x.text === p[i].text && x.kind === p[i].kind)));
+      showQueue();
+    }
+  } finally {
+    flushing = false;
+    showQueue();
+    if (done) $("#msg").textContent = `补交了 ${done} 条 ✓`;
+  }
+}
+
+$("#go").onclick = async () => {
+  const text = $("#txt").value.trim();
+  if (!text) { $("#txt").focus(); return; }
+  const item = { text, kind, at: new Date().toISOString() };
+  $("#go").disabled = true;
+  $("#msg").textContent = "存…";
+  try {
+    const r = await send(item);
+    $("#txt").value = "";
+    $("#msg").textContent = (r && r.truncated)
+      ? `存下了，但太长 —— 尾部 ${r.truncated} 个字没能保存。`
+      : "存好了 ✓  接着记下一条";
+    await flush();
+  } catch (e) {
+    const p = pending(); p.push(item);
+    const r = setPending(p);
+    if (r.ok && !r.dropped) {
+      $("#txt").value = "";
+      $("#msg").textContent = "现在连不上，已经存在手机本地，回到网络里会自动补交。";
+    } else if (r.ok && r.dropped) {
+      $("#txt").value = "";
+      $("#msg").textContent = `已存在本地，但队列超过 ${QMAX} 条，最早的 ${r.dropped} 条被挤掉了。`;
+    } else {
+      // 存不进本地存储（无痕模式、空间满）——**不要清空输入框**，
+      // 那是这段文字仅存的一份。
+      $("#msg").textContent = "连不上，而且这台手机的本地存储也写不进去。"
+        + "请先别关这个页面，把上面的文字复制走。";
+    }
+    showQueue();
+  } finally {
+    $("#go").disabled = false;
+    $("#txt").focus();
+  }
+};
+
+/* 手机键盘上 Cmd/Ctrl+Enter 也能提交 */
+$("#txt").addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#go").click();
+});
+
+window.addEventListener("online", flush);
+showQueue(); flush();
+</script>
+</body>
+</html>
