@@ -2,7 +2,7 @@
 
 [中文](README.md) · [Installation guide (Chinese)](docs/安装与使用.md) · [Contributing](CONTRIBUTING.md)
 
-[![Tests](https://github.com/SuperJayLiu/scholar-workspace/actions/workflows/tests.yml/badge.svg)](https://github.com/SuperJayLiu/scholar-workspace/actions/workflows/tests.yml)
+[![Tests](https://github.com/SuperJayLiu/workspace-for-all/actions/workflows/tests.yml/badge.svg)](https://github.com/SuperJayLiu/workspace-for-all/actions/workflows/tests.yml)
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -21,8 +21,8 @@ A local-first, dependency-free workspace for academic work. Manage manuscripts, 
 Requires **Python 3.9+**. There is nothing to install with `pip`.
 
 ```bash
-git clone https://github.com/SuperJayLiu/scholar-workspace.git
-cd scholar-workspace
+git clone https://github.com/SuperJayLiu/workspace-for-all.git
+cd workspace-for-all
 python3 server.py
 ```
 

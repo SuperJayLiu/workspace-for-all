@@ -2,7 +2,7 @@
 
 [English](README.en.md) · [安装与使用](docs/安装与使用.md) · [参与贡献](CONTRIBUTING.md)
 
-[![Tests](https://github.com/SuperJayLiu/scholar-workspace/actions/workflows/tests.yml/badge.svg)](https://github.com/SuperJayLiu/scholar-workspace/actions/workflows/tests.yml)
+[![Tests](https://github.com/SuperJayLiu/workspace-for-all/actions/workflows/tests.yml/badge.svg)](https://github.com/SuperJayLiu/workspace-for-all/actions/workflows/tests.yml)
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -21,8 +21,8 @@
 需要 **Python 3.9+**，无需 `pip install`。
 
 ```bash
-git clone https://github.com/SuperJayLiu/scholar-workspace.git
-cd scholar-workspace
+git clone https://github.com/SuperJayLiu/workspace-for-all.git
+cd workspace-for-all
 python3 server.py
 ```
 
