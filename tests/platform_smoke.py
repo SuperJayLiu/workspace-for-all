@@ -83,7 +83,8 @@ def main():
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5)
-        print(f"platform smoke test: 全部通过 on {sys.platform} ✓")
+        # Keep CI output ASCII-safe for Windows runners using a legacy code page.
+        print(f"platform smoke test: passed on {sys.platform}")
     return 0
 
 
