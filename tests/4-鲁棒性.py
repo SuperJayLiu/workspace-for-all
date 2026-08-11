@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """极端测试 4 · 记录 id 注入、状态文件损坏、崩溃恢复、跨平台文件名、时间边界"""
-import json, os, shutil, signal, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import atexit, json, os, shutil, signal, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent   # 工作台目录 = tests 的上一级
@@ -28,6 +28,20 @@ if not _port_free(PORT):
 
 BASE = f"http://127.0.0.1:{PORT}"
 FAIL = []
+
+# Each suite now runs in a fresh factory-state copy, so privacy tests must own
+# their own canary instead of assuming a user's real secrets file exists.
+SECRETS_CANARY = ROOT / "local" / "secrets.json"
+_CREATED_SECRETS_CANARY = not SECRETS_CANARY.exists()
+if _CREATED_SECRETS_CANARY:
+    SECRETS_CANARY.parent.mkdir(parents=True, exist_ok=True)
+    SECRETS_CANARY.write_text('{"test_canary": true}\n', encoding="utf-8")
+
+
+@atexit.register
+def _remove_test_secrets_canary():
+    if _CREATED_SECRETS_CANARY:
+        SECRETS_CANARY.unlink(missing_ok=True)
 
 
 def check(n, c, e=""):
@@ -106,8 +120,7 @@ for bad in ["../../data/config", "/etc/passwd", "../../../local/secrets", ".."]:
     check(f"GET {bad[:24]} → {st}", st == 404, b[:70])
     st, b = req("/api/records/ideas/" + urllib.parse.quote(bad, safe=""), method="DELETE")
     check(f"DEL {bad[:24]} → {st}", st == 404, b[:70])
-secrets = ROOT / "local" / "secrets.json"
-check("secrets.json 仍在原处未被搬走", secrets.exists())
+check("secrets.json 仍在原处未被搬走", SECRETS_CANARY.exists())
 
 print("\n=== 3. 记录字段注入 frontmatter ===")
 nasty = {
@@ -296,3 +309,5 @@ print("\n" + "=" * 56)
 print("鲁棒性极端测试：" + ("全部通过 ✓" if not FAIL else f"{len(FAIL)} 项失败"))
 for f in FAIL:
     print("   ✗", f)
+if FAIL:
+    raise SystemExit(1)

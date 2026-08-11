@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - id: version
+        name: Require strict semver and matching application version
+        env:
+          REQUESTED_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          tag = os.environ["REQUESTED_TAG"]
+          if not re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+              raise SystemExit(f"release tag must be strict semver (vMAJOR.MINOR.PATCH), got {tag!r}")
+          version = tag[1:]
+          server = Path("server.py").read_text(encoding="utf-8")
+          match = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', server, re.MULTILINE)
+          if not match or match.group(1) != version:
+              raise SystemExit(f"tag {tag} does not match server.py VERSION ({match.group(1) if match else 'missing'})")
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          if package.get("version") != version:
+              raise SystemExit(f"tag {tag} does not match package.json version ({package.get('version')})")
+          notes = Path("docs/releases") / f"{tag}.md"
+          if not notes.is_file():
+              raise SystemExit(f"missing versioned release notes: {notes}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write(f"tag={tag}\nversion={version}\n")
+          PY
+
+  tests:
+    name: Required test suite
+    needs: validate
+    uses: ./.github/workflows/tests.yml
+
+  package:
+    name: Package, attest, and publish
+    needs: [validate, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Build and verify public package
+        run: python scripts/打包.py --public --output-dir dist
+      - name: Create SHA-256 checksum
+        working-directory: dist
+        run: sha256sum "Scholar-Workspace-${{ needs.validate.outputs.tag }}.zip" > SHA256SUMS.txt
+      - name: Attest package provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/Scholar-Workspace-${{ needs.validate.outputs.tag }}.zip
+      - name: Create release or replace its artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          notes="docs/releases/${RELEASE_TAG}.md"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "dist/Scholar-Workspace-${RELEASE_TAG}.zip" dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "dist/Scholar-Workspace-${RELEASE_TAG}.zip" dist/SHA256SUMS.txt \
+              --verify-tag \
+              --title "Scholar Workspace ${RELEASE_TAG}" \
+              --notes-file "$notes"
+          fi

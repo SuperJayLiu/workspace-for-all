@@ -31,6 +31,13 @@ if not defined PYV (
   pause
   exit /b 1
 )
+%PY% -c "import sys;sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>&1
+if errorlevel 1 (
+  echo ✗ 需要 Python 3.9 或更新版本，当前是 %PYV%。
+  echo   请从 https://www.python.org/downloads/windows/ 更新后再试。
+  pause
+  exit /b 1
+)
 echo ✓ Python：%PY% （%PYV%）
 
 rem 2) 开机自启：往「启动」文件夹放一个静默启动的快捷方式 -------------------

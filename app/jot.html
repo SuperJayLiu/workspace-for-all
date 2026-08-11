@@ -42,12 +42,17 @@
   .queue div { padding:7px 0; border-top:1px solid var(--line); }
   a.back { display:inline-block; margin-top:22px; font-size:13px; color:var(--accent);
            text-decoration:none; }
+  .lang { float:right; padding:5px 10px; border:1px solid var(--line); border-radius:8px;
+          background:transparent; color:inherit; }
+  .sr-only { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
 </style>
 </head>
 <body>
-<h1>记一笔
-  <small>只做一件事：把念头存下来。之后在电脑上分类。</small></h1>
+<button class="lang" id="lang" type="button" aria-label="Switch language">EN</button>
+<h1 id="heading">记一笔
+  <small id="subtitle">只做一件事：把念头存下来。之后在电脑上分类。</small></h1>
 
+<label for="txt" class="sr-only" id="txtLabel">Capture text</label>
 <textarea id="txt" autofocus placeholder="想到什么直接写。
 例如：
 · 下周三跟合作者对 Table 5
@@ -55,20 +60,35 @@
 · 读完 He & Krishnamurthy 2013"></textarea>
 
 <div class="kinds" id="kinds">
-  <button data-k="idea" class="on">💡 想法</button>
-  <button data-k="question">❓ 疑问</button>
-  <button data-k="todo">📅 待办</button>
-  <button data-k="done">✅ 完成</button>
+  <button data-k="idea" class="on" data-zh="💡 想法" data-en="💡 Idea">💡 想法</button>
+  <button data-k="question" data-zh="❓ 疑问" data-en="❓ Question">❓ 疑问</button>
+  <button data-k="todo" data-zh="📅 待办" data-en="📅 Task">📅 待办</button>
+  <button data-k="done" data-zh="✅ 完成" data-en="✅ Done">✅ 完成</button>
 </div>
 
 <button class="go" id="go">存进工作台</button>
 <div class="msg" id="msg"></div>
 <div class="queue" id="queue"></div>
 
-<a class="back" href="/">← 打开完整工作台</a>
+<a class="back" id="back" href="/">← 打开完整工作台</a>
 
 <script>
 const $ = s => document.querySelector(s);
+let english = (() => { try { const saved=localStorage.getItem('sw_language'); return saved ? saved==='en' : !navigator.language.toLowerCase().startsWith('zh'); } catch(e){ return false; } })();
+const tx = (zh,en) => english ? en : zh;
+function paintLanguage(){
+  document.documentElement.lang=english?'en':'zh-CN';
+  document.title=tx('记一笔 · 学术工作台','Quick capture · Scholar Workspace');
+  $('#lang').textContent=english?'中文':'EN';
+  $('#heading').childNodes[0].nodeValue=tx('记一笔\n  ','Quick capture\n  ');
+  $('#subtitle').textContent=tx('只做一件事：把念头存下来。之后在电脑上分类。','Capture a thought now and organize it later on your computer.');
+  $('#txt').placeholder=tx('想到什么直接写。\n例如：\n· 下周三跟合作者对 Table 5\n· 中介约束那篇能不能换个识别？\n· 读完 He & Krishnamurthy 2013','Write whatever is on your mind.\nExamples:\n· Review Table 5 next Wednesday\n· Could this paper use another identification strategy?\n· Finished He & Krishnamurthy 2013');
+  document.querySelectorAll('#kinds button').forEach(b=>b.textContent=english?b.dataset.en:b.dataset.zh);
+  $('#go').textContent=tx('存进工作台','Save to workspace');
+  $('#back').textContent=tx('← 打开完整工作台','← Open full workspace');
+  showQueue();
+}
+$('#lang').onclick=()=>{english=!english;try{localStorage.setItem('sw_language',english?'en':'zh-CN')}catch(e){}paintLanguage();};
 let kind = "idea";
 const QKEY = "jot_pending";
 const QMAX = 200;          // 排到这么多条还没联网，多半是出了别的问题
@@ -97,7 +117,7 @@ function setPending(v) {
 function showQueue() {
   const p = pending();
   $("#queue").innerHTML = p.length
-    ? `<b>还有 ${p.length} 条没送出去</b>（连上网会自动补交）` +
+    ? `<b>${english ? `${p.length} pending` : `还有 ${p.length} 条没送出去`}</b>${tx('（连上网会自动补交）',' (sent automatically when online)')}` +
       p.slice(-5).map(x => `<div>${x.text.slice(0, 40).replace(/</g, "&lt;")}</div>`).join("")
     : "";
 }
@@ -141,7 +161,7 @@ async function flush() {
   } finally {
     flushing = false;
     showQueue();
-    if (done) $("#msg").textContent = `补交了 ${done} 条 ✓`;
+    if (done) $("#msg").textContent = english ? `Sent ${done} pending items ✓` : `补交了 ${done} 条 ✓`;
   }
 }
 
@@ -150,28 +170,27 @@ $("#go").onclick = async () => {
   if (!text) { $("#txt").focus(); return; }
   const item = { text, kind, at: new Date().toISOString() };
   $("#go").disabled = true;
-  $("#msg").textContent = "存…";
+  $("#msg").textContent = tx("存…","Saving…");
   try {
     const r = await send(item);
     $("#txt").value = "";
     $("#msg").textContent = (r && r.truncated)
-      ? `存下了，但太长 —— 尾部 ${r.truncated} 个字没能保存。`
-      : "存好了 ✓  接着记下一条";
+      ? (english ? `Saved, but the final ${r.truncated} characters were too long.` : `存下了，但太长 —— 尾部 ${r.truncated} 个字没能保存。`)
+      : tx("存好了 ✓  接着记下一条","Saved ✓ Capture another");
     await flush();
   } catch (e) {
     const p = pending(); p.push(item);
     const r = setPending(p);
     if (r.ok && !r.dropped) {
       $("#txt").value = "";
-      $("#msg").textContent = "现在连不上，已经存在手机本地，回到网络里会自动补交。";
+      $("#msg").textContent = tx("现在连不上，已经存在手机本地，回到网络里会自动补交。","Offline: saved on this device and will be sent automatically when online.");
     } else if (r.ok && r.dropped) {
       $("#txt").value = "";
-      $("#msg").textContent = `已存在本地，但队列超过 ${QMAX} 条，最早的 ${r.dropped} 条被挤掉了。`;
+      $("#msg").textContent = english ? `Saved locally, but the queue exceeded ${QMAX}; ${r.dropped} oldest items were removed.` : `已存在本地，但队列超过 ${QMAX} 条，最早的 ${r.dropped} 条被挤掉了。`;
     } else {
       // 存不进本地存储（无痕模式、空间满）——**不要清空输入框**，
       // 那是这段文字仅存的一份。
-      $("#msg").textContent = "连不上，而且这台手机的本地存储也写不进去。"
-        + "请先别关这个页面，把上面的文字复制走。";
+      $("#msg").textContent = tx("连不上，而且这台手机的本地存储也写不进去。请先别关这个页面，把上面的文字复制走。","Offline and local storage is unavailable. Keep this page open and copy your text somewhere safe.");
     }
     showQueue();
   } finally {
@@ -186,7 +205,7 @@ $("#txt").addEventListener("keydown", e => {
 });
 
 window.addEventListener("online", flush);
-showQueue(); flush();
+paintLanguage(); flush();
 </script>
 </body>
 </html>

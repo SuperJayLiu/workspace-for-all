@@ -8,16 +8,16 @@ const UI = {
     opts = opts || {};
     /* 用户在布局编辑里给这张卡设的个性化项（标题、条数、默认收起、备注） */
     const co = ((S.config || {}).card_opts || {})[key] || {};
-    const shownTitle = co.title || title;
+    const shownTitle = co.title || (typeof I18N !== "undefined" ? I18N.t(title) : title);
     const defOpen = co.collapsed ? false : (opts.defaultOpen !== false);
     const collapsed = UI.isCollapsed(key, defOpen);
     let body = bodyHtml;
     if (co.limit > 0) body = UI.limitRows(body, co.limit);
     if (co.note) body = `<div class="card-note">${esc(co.note)}</div>` + body;
     return `<section class="card ${collapsed ? "collapsed" : ""}" data-cardkey="${esc(key)}">
-      <div class="card-head" data-collapse>
+      <div class="card-head" data-collapse role="button" tabindex="0" aria-expanded="${collapsed ? "false" : "true"}">
         <span class="caret">▾</span>
-        <h2>${opts.icon ? opts.icon + " " : ""}${esc(shownTitle)}${en ? ` <span class="zh">${esc(en)}</span>` : ""}</h2>
+        <h2>${opts.icon ? opts.icon + " " : ""}${esc(shownTitle)}${en && !(typeof I18N !== "undefined" && I18N.isEnglish() && en === shownTitle) ? ` <span class="zh">${esc(en)}</span>` : ""}</h2>
         <span class="spacer"></span>
         ${opts.actions || ""}
       </div>
@@ -53,7 +53,7 @@ const UI = {
   tut(key, title, html) {
     const dis = (S.config.tutorial_dismissed || {})[key];
     return `<div class="tut ${dis ? "collapsed" : ""}" data-tutkey="${esc(key)}">
-      <div class="tut-head" data-tut><span class="caret">▾</span><span>📖 ${esc(title)}</span>
+      <div class="tut-head" data-tut role="button" tabindex="0" aria-expanded="${dis ? "false" : "true"}"><span class="caret">▾</span><span>📖 ${esc(title)}</span>
         <span class="spacer"></span><span class="tiny muted">点此收起/展开</span></div>
       <div class="tut-body">${html}</div></div>`;
   },
@@ -80,7 +80,7 @@ const UI = {
       const t = f.type === "number" ? "number" : f.type === "date" ? "date" : f.type === "url" ? "url" : "text";
       inner = `<input type="${t}" step="any" id="${id}" value="${esc(val == null ? "" : val)}" placeholder="${esc(f.ph || "")}">`;
     }
-    return `<div class="field ${f.wide ? "wide" : ""}"><label>${esc(f.label)}</label>${inner}
+    return `<div class="field ${f.wide ? "wide" : ""}"><label for="${id}">${esc(f.label)}</label>${inner}
       ${f.hint ? `<div class="hint">${f.hint}</div>` : ""}</div>`;
   },
   readForm(schema) {
@@ -98,16 +98,41 @@ const UI = {
 
   /* --------------------------------- 弹窗 ------------------------------- */
   modal(title, bodyHtml, footHtml) {
+    UI._modalReturn = document.activeElement;
     $("#modal").innerHTML = `
-      <div class="modal-head"><h3>${esc(title)}</h3><span class="spacer"></span>
-        <button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-head"><h3 id="modalTitle">${esc(title)}</h3><span class="spacer"></span>
+        <button class="icon-btn" data-close aria-label="Close dialog">✕</button></div>
       <div class="modal-body">${bodyHtml}</div>
       ${footHtml ? `<div class="modal-foot">${footHtml}</div>` : ""}`;
     $("#modalBack").hidden = false;
     UI.bindPills($("#modal"));
     $$("[data-close]", $("#modal")).forEach(b => b.onclick = UI.closeModal);
+    $("#modalBack").onclick = e => { if (e.target === $("#modalBack")) UI.closeModal(); };
+    const modal = $("#modal");
+    if (typeof I18N !== "undefined") I18N.apply(modal);
+    const focusable = () => $$("button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])", modal)
+      .filter(el => !el.hidden && el.getClientRects().length);
+    modal.onkeydown = e => {
+      if (e.key !== "Tab") return;
+      const list = focusable();
+      if (!list.length) { e.preventDefault(); modal.focus(); return; }
+      const first = list[0], last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    setTimeout(() => {
+      const target = modal.querySelector("[autofocus],input:not([type='hidden']),textarea,select,button:not([data-close])") || modal;
+      target.focus();
+    }, 0);
   },
-  closeModal() { $("#modalBack").hidden = true; $("#modal").innerHTML = ""; },
+  closeModal() {
+    const back = $("#modalBack");
+    if (!back || back.hidden) return;
+    back.hidden = true;
+    const modal = $("#modal"); modal.innerHTML = ""; modal.onkeydown = null;
+    const target = UI._modalReturn; UI._modalReturn = null;
+    if (target && target.isConnected && target.focus) target.focus();
+  },
 
   /* 通用记录编辑器 */
   /* 打开编辑器前，先把这条记录的**完整**内容从服务端取回来。
@@ -416,10 +441,13 @@ const UI = {
 
   bindPills(root) {
     $$(".pill-select", root || document).forEach(ps => {
+      ps.setAttribute("role", "group");
+      $$("button[data-v]", ps).forEach(b => b.setAttribute("aria-pressed", String(b.classList.contains("on"))));
       ps.onclick = e => {
         const b = e.target.closest("button[data-v]"); if (!b) return;
-        $$("button", ps).forEach(x => x.classList.remove("on"));
+        $$("button", ps).forEach(x => { x.classList.remove("on"); x.setAttribute("aria-pressed", "false"); });
         b.classList.add("on");
+        b.setAttribute("aria-pressed", "true");
         const hidden = document.getElementById("f_" + ps.dataset.pill);
         if (hidden) hidden.value = b.dataset.v;
         if (ps.dataset.onchange && window[ps.dataset.onchange]) window[ps.dataset.onchange](b.dataset.v);
@@ -430,7 +458,8 @@ const UI = {
   /* ------------------------------ 可拖动进度条 ---------------------------- */
   prog(pct, attrs) {
     pct = Math.max(0, Math.min(100, Math.round(pct || 0)));
-    return `<div class="prog-wrap"><div class="prog" ${attrs || ""}><div class="fill" style="width:${pct}%"></div></div>
+    return `<div class="prog-wrap"><div class="prog" ${attrs || ""} role="slider" tabindex="0"
+      aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><div class="fill" style="width:${pct}%"></div></div>
       <span class="pct">${pct}%</span></div>`;
   },
   bindProg() {
@@ -441,6 +470,7 @@ const UI = {
         let p = Math.round(((clientX - r.left) / r.width) * 100);
         p = Math.max(0, Math.min(100, p));
         $(".fill", el).style.width = p + "%";
+        el.setAttribute("aria-valuenow", String(p));
         const lbl = el.parentElement.querySelector(".pct"); if (lbl) lbl.textContent = p + "%";
         if (commit) patchRec(el.dataset.progColl, el.dataset.progId, { progress: p }).then(() => toast("进度 " + p + "%"));
       };
@@ -458,6 +488,18 @@ const UI = {
       };
       el.addEventListener("mousedown", down);
       el.addEventListener("touchstart", down, { passive: false });
+      el.addEventListener("keydown", e => {
+        if (!['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+        e.preventDefault();
+        const cur = Number(el.getAttribute("aria-valuenow")) || 0;
+        const step = e.shiftKey ? 10 : 1;
+        const next = e.key === "Home" ? 0 : e.key === "End" ? 100
+          : Math.max(0, Math.min(100, cur + (['ArrowRight', 'ArrowUp'].includes(e.key) ? step : -step)));
+        $(".fill", el).style.width = next + "%";
+        el.setAttribute("aria-valuenow", String(next));
+        const lbl = el.parentElement.querySelector(".pct"); if (lbl) lbl.textContent = next + "%";
+        patchRec(el.dataset.progColl, el.dataset.progId, { progress: next }).then(() => toast("Progress " + next + "%"));
+      });
     });
   },
 
@@ -487,8 +529,22 @@ const UI = {
   bindKanban() {
     let dragged = null;
     $$(".kcard[draggable]").forEach(c => {
+      c.tabIndex = 0;
+      c.setAttribute("role", "button");
+      c.setAttribute("aria-label", `${c.textContent.trim()}. Use Left and Right arrows to change stage.`);
       c.ondragstart = e => { dragged = c; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; };
       c.ondragend = () => { c.classList.remove("dragging"); dragged = null; };
+      c.onkeydown = async e => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+        const cols = $$(".kcol[data-stage]");
+        const current = c.closest(".kcol");
+        const at = cols.indexOf(current), nextAt = at + (e.key === "ArrowRight" ? 1 : -1);
+        if (nextAt < 0 || nextAt >= cols.length) return;
+        e.preventDefault();
+        const next = cols[nextAt], patch = {}; patch[next.dataset.field || "stage"] = next.dataset.stage;
+        await patchRec(c.dataset.coll, c.dataset.id, patch);
+        render(); renderNav(); toast("Moved to " + next.dataset.stageName);
+      };
     });
     $$(".kcol[data-stage]").forEach(col => {
       col.ondragover = e => { e.preventDefault(); col.classList.add("over"); };
@@ -538,7 +594,8 @@ const UI = {
           <div class="gantt-bar ${it.cls || ""}" style="left:${l}%;width:${w}%"
                data-gid="${esc(it.id)}" data-gcoll="${esc(it.coll || "")}"
                data-gstart="${esc(it.start)}" data-gend="${esc(it.end)}"
-               data-gspan="${span}" title="${esc(it.label)} ${esc(it.start)} → ${esc(it.end)}">
+               data-gspan="${span}" title="${esc(it.label)} ${esc(it.start)} → ${esc(it.end)}"
+               tabindex="0" role="group" aria-label="${esc(it.label)}. ${esc(it.start)} to ${esc(it.end)}. Use arrow keys to move; hold Shift to resize the end date.">
             <span class="h l"></span>${esc(it.short || "")}<span class="h r"></span>
           </div>
         </div></div>`;
@@ -556,6 +613,7 @@ const UI = {
       const track = bar.parentElement;
       let mode = null, startX = 0, l0 = 0, w0 = 0;
       const dayPx = () => track.getBoundingClientRect().width / Number(bar.dataset.gspan);
+      const shift = (s, n) => { const d = parseDate(s); if (!d) return s; d.setDate(d.getDate() + n); return todayStr(d); };
       const down = e => {
         const t = e.target;
         mode = t.classList.contains("l") ? "l" : t.classList.contains("r") ? "r" : "move";
@@ -577,7 +635,6 @@ const UI = {
         const dx = (e.changedTouches ? e.changedTouches[0] : e).clientX - startX;
         const dd = Math.round(dx / dayPx());
         if (!dd) { render(); return; }
-        const shift = (s, n) => { const d = parseDate(s); if (!d) return s; d.setDate(d.getDate() + n); return todayStr(d); };
         const patch = {};
         if (mode === "move") { patch.start = shift(bar.dataset.gstart, dd); patch.end = shift(bar.dataset.gend, dd); }
         else if (mode === "r") patch.end = shift(bar.dataset.gend, dd);
@@ -587,6 +644,16 @@ const UI = {
       };
       bar.addEventListener("mousedown", down);
       bar.addEventListener("touchstart", down, { passive: false });
+      bar.addEventListener("keydown", async e => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+        e.preventDefault();
+        const dd = e.key === "ArrowRight" ? 1 : -1;
+        const patch = e.shiftKey
+          ? { end: shift(bar.dataset.gend, dd) }
+          : { start: shift(bar.dataset.gstart, dd), end: shift(bar.dataset.gend, dd) };
+        await patchRec(bar.dataset.gcoll, bar.dataset.gid, patch);
+        render(); toast(e.shiftKey ? "End date adjusted" : "Dates adjusted");
+      });
     });
   },
 
@@ -596,7 +663,7 @@ const UI = {
     if (!files.length) return `<div class="empty">这个文件夹里没找到图表。把图放进 <code>figures/</code> 或 <code>tables/</code> 即可自动显示。</div>`;
     return `<div class="gallery">` + files.map(f => `
       <div class="gitem ${opts.pinned === f.path ? "pinned" : ""}" data-fig="${esc(f.path)}">
-        <div class="fig-slot" data-src="${esc(f.path)}" style="min-height:74px;display:grid;place-items:center;color:var(--muted);font-size:11px">载入中…</div>
+        <div class="fig-slot" data-src="${esc(f.path)}" data-alt="${esc(f.name || "Research figure")}" style="min-height:74px;display:grid;place-items:center;color:var(--muted);font-size:11px">载入中…</div>
         ${opts.pinTo ? `<span class="pin" data-pin="${esc(f.path)}" data-pinid="${esc(opts.pinTo)}">${opts.pinned === f.path ? "★" : "☆"}</span>` : ""}
         <div class="cap" title="${esc(f.name)}">${esc(f.name)}</div>
       </div>`).join("") + `</div>`;
@@ -608,7 +675,7 @@ const UI = {
       const path = slot.dataset.src;
       const url = "/api/file?path=" + encodeURIComponent(path);
       if (/\.(png|jpe?g|gif|svg|webp)$/i.test(path)) {
-        slot.innerHTML = `<img src="${url}" loading="lazy" alt="">`;
+        slot.innerHTML = `<img src="${url}" loading="lazy" alt="${esc(slot.dataset.alt || "Research figure")}">`;
       } else if (/\.pdf$/i.test(path)) {
         try {
           await UI.ensurePdfJs();
@@ -675,6 +742,7 @@ const UI = {
       cb.checked ? PICK.add(key) : PICK.delete(key);
       UI.pickBar();
     });
+    $$(".pickbox").forEach(cb => cb.setAttribute("aria-label", tr("选择这条记录", "Select this record")));
     UI.pickBar();
     $$("[data-showextra]").forEach(b => b.onclick = e => {
       e.stopPropagation();
@@ -691,23 +759,42 @@ const UI = {
     /* 整行可点：以前只有行尾那个「前往」小按钮能点，太难瞄了 */
     $$(".row-line[data-rowgo]").forEach(row => {
       row.classList.add("clickable");
+      row.setAttribute("role", "link");
+      row.tabIndex = 0;
       row.onclick = e => {
         if (e.target.closest("button, a, input, select, textarea, label")) return;
         go(row.dataset.rowgo);
       };
+      row.onkeydown = e => {
+        if (!['Enter', ' '].includes(e.key)) return;
+        if (e.target.closest("button, a, input, select, textarea, label")) return;
+        e.preventDefault(); go(row.dataset.rowgo);
+      };
     });
-    $$("[data-collapse]").forEach(h => h.onclick = e => {
-      if (e.target.closest("button:not([data-collapse])")) return;
-      const card = h.closest(".card");
-      card.classList.toggle("collapsed");
-      UI.setCollapsed(card.dataset.cardkey, card.classList.contains("collapsed"));
+    $$("[data-collapse]").forEach(h => {
+      const toggle = e => {
+        if (e.type === "click" && e.target.closest("button:not([data-collapse])")) return;
+        if (e.type === "keydown" && !['Enter', ' '].includes(e.key)) return;
+        if (e.type === "keydown") e.preventDefault();
+        const card = h.closest(".card");
+        card.classList.toggle("collapsed");
+        UI.setCollapsed(card.dataset.cardkey, card.classList.contains("collapsed"));
+        h.setAttribute("aria-expanded", String(!card.classList.contains("collapsed")));
+      };
+      h.onclick = toggle; h.onkeydown = toggle;
     });
-    $$("[data-tut]").forEach(h => h.onclick = async () => {
-      const box = h.closest(".tut");
-      box.classList.toggle("collapsed");
-      const d = Object.assign({}, S.config.tutorial_dismissed || {});
-      d[box.dataset.tutkey] = box.classList.contains("collapsed");
-      await saveConfig({ tutorial_dismissed: d });
+    $$("[data-tut]").forEach(h => {
+      const toggle = async e => {
+        if (e.type === "keydown" && !['Enter', ' '].includes(e.key)) return;
+        if (e.type === "keydown") e.preventDefault();
+        const box = h.closest(".tut");
+        box.classList.toggle("collapsed");
+        h.setAttribute("aria-expanded", String(!box.classList.contains("collapsed")));
+        const d = Object.assign({}, S.config.tutorial_dismissed || {});
+        d[box.dataset.tutkey] = box.classList.contains("collapsed");
+        await saveConfig({ tutorial_dismissed: d });
+      };
+      h.onclick = toggle; h.onkeydown = toggle;
     });
     $$("[data-edit]").forEach(b => b.onclick = () => {
       const [coll, id] = b.dataset.edit.split(":");

@@ -19,7 +19,7 @@ const PAL = {
   mount() {
     const { i, r } = PAL.el();
     if (!i || !r) return;
-    i.setAttribute("placeholder", "搜记录 / 文献 / 功能设置 · Cmd/Ctrl+K");
+    i.setAttribute("placeholder", tr("搜记录 / 文献 / 功能设置 · Cmd/Ctrl+K", "Search records, papers, and settings · Cmd/Ctrl+K"));
     i.oninput = () => {
       clearTimeout(PAL._timer);
       PAL._timer = setTimeout(() => PAL.run(i.value), 180);
@@ -53,6 +53,7 @@ const PAL = {
     } catch (e) {
       const { r } = PAL.el();
       if (r) { r.hidden = false; r.innerHTML = `<div class="sr-empty">搜索出错：${esc(String(e.message || e))}</div>`; }
+      const { i } = PAL.el(); if (i) i.setAttribute("aria-expanded", "true");
     }
   },
 
@@ -65,6 +66,7 @@ const PAL = {
       r.hidden = false;
       r.innerHTML = `<div class="sr-empty">没找到「${esc(PAL.q)}」<br>
         <span class="tiny muted">试试搜功能名（备份 / 钉钉 / 时区 / token）、稿件题目、作者、citekey</span></div>`;
+      const input = PAL.el().i; if (input) input.setAttribute("aria-expanded", "true");
       return;
     }
     let html = "";
@@ -79,6 +81,8 @@ const PAL = {
     });
     r.hidden = false;
     r.innerHTML = html;
+    const input = PAL.el().i;
+    if (input) input.setAttribute("aria-expanded", "true");
     PAL.sel = 0;
     PAL.highlight();
     PAL.open = true;
@@ -92,7 +96,7 @@ const PAL = {
         ? esc(it.meta || "") + (it.citekey ? ` · <code>${esc(it.citekey)}</code>` : "")
         : kind === "quote" ? esc(it.meta || "")
           : (it.route ? `跳到「${esc(it.route === "settings" ? "设置" : it.route)}」` : "");
-    return `<div class="sr" data-pi="${idx}">
+    return `<div class="sr" data-pi="${idx}" id="searchOption${idx}" role="option" aria-selected="false">
       <span class="sr-ico">${ICON[kind] || "•"}</span>
       <span class="sr-main">
         <span class="sr-title">${esc(String(it.title || "").slice(0, 110))}</span>
@@ -110,14 +114,25 @@ const PAL = {
   highlight() {
     const { r } = PAL.el();
     if (!r) return;
-    $$(".sr", r).forEach((el, i) => el.classList.toggle("on", i === PAL.sel));
+    $$(".sr", r).forEach((el, i) => {
+      const on = i === PAL.sel;
+      el.classList.toggle("on", on);
+      el.setAttribute("aria-selected", String(on));
+    });
     const on = $(".sr.on", r);
+    const input = PAL.el().i;
+    if (input) {
+      if (on) input.setAttribute("aria-activedescendant", on.id);
+      else input.removeAttribute("aria-activedescendant");
+    }
     if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest" });
   },
 
   close() {
     const { r } = PAL.el();
     if (r) r.hidden = true;
+    const input = PAL.el().i;
+    if (input) { input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); }
     PAL.open = false;
   },
 

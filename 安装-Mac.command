@@ -17,13 +17,15 @@ echo
 PY=""
 for c in python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
   if command -v "$c" >/dev/null 2>&1; then
-    v="$("$c" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
-    if [ -n "$v" ] && [ "${v%%.*}" -ge 3 ] && [ "${v#*.}" -ge 8 ]; then PY="$(command -v "$c")"; break; fi
+    if "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+      PY="$(command -v "$c")"; break
+    fi
   fi
 done
 if [ -z "$PY" ]; then
-  echo "✗ 没找到 Python 3.8 或更新的版本。"
-  echo "  最省事的办法：打开「终端」，运行  xcode-select --install"
+  echo "✗ 没找到 Python 3.9 或更新的版本。"
+  echo "  请从 https://www.python.org/downloads/macos/ 安装，"
+  echo "  或在已安装 Homebrew 时运行：brew install python"
   echo "  装完以后再双击本文件一次。"
   echo; read -r -p "按回车关闭…" _; exit 1
 fi

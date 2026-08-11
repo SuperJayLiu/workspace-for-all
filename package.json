@@ -1,0 +1,19 @@
+{
+  "name": "scholar-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-first research command center",
+  "scripts": {
+    "test": "bash tests/跑全部.sh",
+    "test:core": "bash tests/跑全部.sh --python-only",
+    "test:ui": "bash tests/跑全部.sh --ui-only",
+    "test:smoke": "python3 tests/platform_smoke.py"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

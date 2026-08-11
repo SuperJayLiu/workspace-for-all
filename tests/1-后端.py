@@ -206,7 +206,9 @@ made = [m.write_record("ideas", {"title": f"性能测试 {i}", "kind": "idea",
                                  "body": "内容 " * 40})["id"] for i in range(400)]
 t_write = time.time() - t0
 t0 = time.time(); recs = m.list_records("ideas"); t_read = time.time() - t0
-check(f"写 400 条 {t_write:.1f}s / 读 {len(recs)} 条 {t_read:.2f}s", t_read < 3.0 and t_write < 40)
+# Hosted runners and APFS have very different cold-file latency. This ceiling
+# catches gross regressions without treating a shared runner as a benchmark.
+check(f"写 400 条 {t_write:.1f}s / 读 {len(recs)} 条 {t_read:.2f}s", t_read < 10.0 and t_write < 60)
 t0 = time.time(); snap = m.snapshot("rolling"); t_snap = time.time() - t0
 check(f"含 400 条时备份 {t_snap:.1f}s", snap["ok"] and t_snap < 20)
 for i in made:
@@ -249,3 +251,5 @@ print("\n" + "=" * 60)
 print(f"后端极端测试：{'全部通过 ✓' if not FAIL else f'{len(FAIL)} 项失败'}")
 for f in FAIL:
     print("   ✗", f)
+if FAIL:
+    raise SystemExit(1)
