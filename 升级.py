@@ -33,7 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 # 这些是「代码」，升级时整体替换
-CODE_ITEMS = ["server.py", "services.py", "library.py", "search.py", "pdfmeta.py",
+CODE_ITEMS = ["server.py", "services.py", "library.py", "search.py", "pdfmeta.py", "radar.py",
               "app", "scripts", "tests", "skills", "docs",
               "README.md", "使用教程.md", "交付说明.md", "LICENSE",
               "安装-Mac.command", "安装-Windows.bat", "启动.command", "启动.bat",

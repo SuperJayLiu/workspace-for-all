@@ -20,23 +20,43 @@ input{width:100%;padding:11px 13px;font-size:17px;border:1px solid #e3e6ea;borde
 button{width:100%;margin-top:12px;padding:11px;font-size:15px;border:0;border-radius:9px;
   background:#3b5bdb;color:#fff;cursor:pointer}
 button:disabled{opacity:.55;cursor:default}
+.lang{width:auto;float:right;margin:0 0 8px 12px;padding:5px 9px;background:transparent;color:inherit;border:1px solid #9aa2ad;font-size:12px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .msg{margin-top:12px;font-size:13px;min-height:20px;color:#e03131}
 .note{margin-top:16px;font-size:12px;color:#9aa2ad;line-height:1.5}
 </style>
 </head>
 <body>
 <div class="box">
-  <h1>需要访问码</h1>
-  <p>你正从别的设备连接这台电脑上的工作台。</p>
+  <button class="lang" id="lang" type="button" aria-label="Switch language">EN</button>
+  <h1 id="title">需要访问码</h1>
+  <p id="intro">你正从别的设备连接这台电脑上的工作台。</p>
+  <label for="code" class="sr-only">Access code</label>
   <input id="code" type="password" inputmode="numeric" autocomplete="one-time-code"
          placeholder="访问码" autofocus>
   <button id="go">进入</button>
   <div class="msg" id="msg"></div>
-  <div class="note">进入后默认<b>只读</b>：可以看，不能改。要改东西，在页面右上角点「解锁写入」再输一次访问码，
+  <div class="note" id="note">进入后默认<b>只读</b>：可以看，不能改。要改东西，在页面右上角点「解锁写入」再输一次访问码，
     解锁有效 30 分钟。访问码只存在那台电脑上，不进云端也不进备份。</div>
 </div>
 <script>
 const $ = s => document.querySelector(s);
+let english = (() => { try { const saved=localStorage.getItem('sw_language'); return saved ? saved==='en' : !navigator.language.toLowerCase().startsWith('zh'); } catch(e){ return false; } })();
+const tx = (zh,en) => english ? en : zh;
+function paintLanguage(){
+  document.documentElement.lang = english ? 'en' : 'zh-CN';
+  document.title = tx('学术工作台 · 访问码','Scholar Workspace · Access code');
+  $('#lang').textContent = english ? '中文' : 'EN';
+  $('#title').textContent = tx('需要访问码','Access code required');
+  $('#intro').textContent = tx('你正从别的设备连接这台电脑上的工作台。','You are connecting to the workspace from another device.');
+  $('#code').placeholder = tx('访问码','Access code');
+  $('#go').textContent = tx('进入','Continue');
+  $('#note').innerHTML = english
+    ? 'The session starts in <b>read-only</b> mode. To edit, use “Unlock editing” in the top-right and enter the code again. Editing remains unlocked for 30 minutes. The code stays on the host computer and is never synced or backed up.'
+    : '进入后默认<b>只读</b>：可以看，不能改。要改东西，在页面右上角点「解锁写入」再输一次访问码，解锁有效 30 分钟。访问码只存在那台电脑上，不进云端也不进备份。';
+}
+$('#lang').onclick=()=>{ english=!english; try{localStorage.setItem('sw_language',english?'en':'zh-CN')}catch(e){} paintLanguage(); };
+paintLanguage();
 async function submit(){
   const code = $('#code').value.trim();
   if(!code) return;
@@ -47,9 +67,9 @@ async function submit(){
       body: JSON.stringify({code}), credentials: 'same-origin'});
     const j = await r.json().catch(() => ({}));
     if(r.ok && j.ok){ location.href = '/'; return; }
-    $('#msg').textContent = j.error || ('登录失败 (HTTP ' + r.status + ')');
+    $('#msg').textContent = j.error || (tx('登录失败','Login failed') + ' (HTTP ' + r.status + ')');
   }catch(e){
-    $('#msg').textContent = '连不上工作台：' + e.message;
+    $('#msg').textContent = tx('连不上工作台：','Cannot reach the workspace: ') + e.message;
   }
   $('#go').disabled = false;
   $('#code').select();

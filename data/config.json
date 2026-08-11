@@ -1,5 +1,6 @@
 {
   "owner": "",
+  "language": "zh-CN",
   "sections": [
     "today",
     "hub",
@@ -95,22 +96,26 @@
     "remote_readonly": true,
     "encrypt_backup": false
   },
+  "git": {
+    "private_sync_confirmed": false,
+    "confirmed_remote": ""
+  },
   "quicklinks": [
     {
       "name": "打开 Claude",
       "url": "https://claude.ai/new",
+      "app": "claude://",
       "color": "#c96442",
       "letter": "C",
-      "group": "AI",
-      "app": "claude://"
+      "group": "AI"
     },
     {
       "name": "打开 ChatGPT",
       "url": "https://chatgpt.com/",
+      "app": "chatgpt://",
       "color": "#10a37f",
       "letter": "G",
-      "group": "AI",
-      "app": "chatgpt://"
+      "group": "AI"
     },
     {
       "name": "Google Scholar",
@@ -154,124 +159,5 @@
     ],
     "per_keyword": 12,
     "mailto": ""
-  },
-  "a": {
-    "a": {
-      "a": {
-        "a": {
-          "a": {
-            "a": {
-              "a": {
-                "a": {
-                  "a": {
-                    "a": {
-                      "a": {
-                        "a": {
-                          "a": {
-                            "a": {
-                              "a": {
-                                "a": {
-                                  "a": {
-                                    "a": {
-                                      "a": {
-                                        "a": {
-                                          "a": {
-                                            "a": {
-                                              "a": {
-                                                "a": {
-                                                  "a": {
-                                                    "a": {
-                                                      "a": {
-                                                        "a": {
-                                                          "a": {
-                                                            "a": {
-                                                              "a": {
-                                                                "a": {
-                                                                  "a": {
-                                                                    "a": {
-                                                                      "a": {
-                                                                        "a": {
-                                                                          "a": {
-                                                                            "a": {
-                                                                              "a": {
-                                                                                "a": {
-                                                                                  "a": {
-                                                                                    "a": {
-                                                                                      "a": {
-                                                                                        "a": {
-                                                                                          "a": {
-                                                                                            "a": {
-                                                                                              "a": {
-                                                                                                "a": {
-                                                                                                  "a": {
-                                                                                                    "a": {
-                                                                                                      "a": {
-                                                                                                        "a": {
-                                                                                                          "a": {
-                                                                                                            "a": {
-                                                                                                              "a": {
-                                                                                                                "a": {
-                                                                                                                  "a": {
-                                                                                                                    "a": {
-                                                                                                                      "a": {
-                                                                                                                        "a": 1
-                                                                                                                      }
-                                                                                                                    }
-                                                                                                                  }
-                                                                                                                }
-                                                                                                              }
-                                                                                                            }
-                                                                                                          }
-                                                                                                        }
-                                                                                                      }
-                                                                                                    }
-                                                                                                  }
-                                                                                                }
-                                                                                              }
-                                                                                            }
-                                                                                          }
-                                                                                        }
-                                                                                      }
-                                                                                    }
-                                                                                  }
-                                                                                }
-                                                                              }
-                                                                            }
-                                                                          }
-                                                                        }
-                                                                      }
-                                                                    }
-                                                                  }
-                                                                }
-                                                              }
-                                                            }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }

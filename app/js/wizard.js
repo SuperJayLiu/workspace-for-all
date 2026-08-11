@@ -5,12 +5,18 @@ const WZ = {
   get last() { return WZ.steps.length - 1; },      // 最后一步（核对页）的索引
 
   open(startAt) {
+    WZ.returnFocus = document.activeElement;
     WZ.step = startAt || 0;
     WZ.draft = { config: {}, device: {}, secrets: {} };
-    document.body.insertAdjacentHTML("beforeend", `<div class="wz-back" id="wzBack"><div class="wz" id="wz"></div></div>`);
+    document.body.insertAdjacentHTML("beforeend", `<div class="wz-back" id="wzBack"><div class="wz" id="wz"
+      role="dialog" aria-modal="true" aria-labelledby="wzTitle" tabindex="-1"></div></div>`);
     WZ.render();
   },
-  close() { const b = $("#wzBack"); if (b) b.remove(); },
+  close() {
+    const b = $("#wzBack"); if (b) b.remove();
+    const target = WZ.returnFocus; WZ.returnFocus = null;
+    if (target && target.isConnected && target.focus) target.focus();
+  },
 
   /* 必填校验：缺哪项就红框标出并阻止下一步；点「跳过这步」则不校验 */
   requireOk() {
@@ -75,9 +81,9 @@ const WZ = {
     const pct = Math.round((WZ.step / WZ.last) * 100);
     $("#wz").innerHTML = `
       <div class="wz-head">
-        <div class="wz-bar"><i style="width:${pct}%"></i></div>
+        <div class="wz-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
         <div class="wz-step">${WZ.step === 0 ? "开始" : `第 ${WZ.step} / ${WZ.last} 步`}</div>
-        <div class="wz-title">${s.icon} ${s.title}</div>
+        <div class="wz-title" id="wzTitle">${s.icon} ${typeof I18N !== "undefined" ? I18N.t(s.title) : s.title}</div>
         ${s.sub ? `<div class="wz-sub">${s.sub}</div>` : ""}
       </div>
       <div class="wz-body">${s.body()}</div>
@@ -99,12 +105,43 @@ const WZ = {
     if ($("#wzSkip")) $("#wzSkip").onclick = () => { WZ.step = Math.min(WZ.last, WZ.step + 1); WZ.render(); };
     $("#wzNext").onclick = () => WZ.step >= WZ.last ? (WZ.requireOk() && WZ.finish()) : WZ.saveAndNext(1);
     if (s.after) s.after();
+    if (typeof I18N !== "undefined") I18N.apply($("#wz"));
+    $("#wz").onkeydown = e => {
+      if (e.key === "Escape") { e.preventDefault(); WZ.close(); return; }
+      if (e.key !== "Tab") return;
+      const list = $$("button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])", $("#wz"))
+        .filter(el => !el.hidden && el.getClientRects().length);
+      if (!list.length) { e.preventDefault(); $("#wz").focus(); return; }
+      const first = list[0], last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    const focusTarget = $("#wz input:not([type='hidden']),#wz textarea,#wz select,#wz button") || $("#wz");
+    if (focusTarget) setTimeout(() => focusTarget.focus(), 0);
   },
 
   async finish() {
     const fn = WZ.steps[WZ.step].collect;
     if (fn) await fn();
     await WZ.flush();
+    const git = (S.config || {}).git || {};
+    if (git.remote) {
+      if (!git.private_confirmed) {
+        WZ.say("wz_finish_error", false, tr(
+          "Git 同步尚未启用：请返回 GitHub 步骤，确认远程是私有仓库且不是公共源码仓库。",
+          "Git sync is not enabled. Return to the GitHub step and confirm that the remote is private and is not the public source repository."));
+        return;
+      }
+      WZ.say("wz_finish_error", true, tr("正在初始化私有仓库…", "Initializing the private repository…"));
+      try {
+        const r = await API.post("git/init", { remote: git.remote, private_confirmed: true });
+        if (!r.ok) throw new Error(r.detail || r.error || "初始化失败");
+        S.git = await API.get("git/status").catch(() => S.git);
+      } catch (e) {
+        WZ.say("wz_finish_error", false, tr("Git 初始化失败：", "Git initialization failed: ") + String(e.message || e));
+        return;
+      }
+    }
     await API.post("setup/complete", {});
     const b = await API.bootstrap(); Object.assign(S, b);
     WZ.close(); applyTheme(); renderNav(); render();
@@ -113,7 +150,7 @@ const WZ = {
 
   note(t) { return `<div class="wz-note">${t}</div>`; },
   row(label, id, ph, type, hint) {
-    return `<div class="field"><label>${label}</label>
+    return `<div class="field"><label for="${id}">${label}</label>
       <input id="${id}" type="${type || "text"}" placeholder="${ph || ""}">
       ${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
   },
@@ -330,10 +367,13 @@ WZ.steps = [
         ${WZ.row("GitHub 用户名", "wz_ghu", "your-username")}
         ${WZ.row("Personal Access Token", "wz_ght", "ghp_…", "password", "GitHub → Settings → Developer settings → PAT，勾 repo 权限。只存本机 local/secrets.json")}
         <div class="field wide">
-          <label>私有仓库地址</label>
+          <label for="wz_ghr">私有仓库地址</label>
           <input id="wz_ghr" placeholder="https://github.com/你的用户名/scholar-workspace.git">
           <div class="hint">先去 GitHub 建一个<b>空的私有仓库</b>（不要勾任何初始化文件），把 HTTPS 地址贴过来。</div></div>
         ${WZ.row("Git 提交邮箱", "wz_ghe", "you@example.com")}
+        <div class="field wide"><label class="wz-check">
+          <input type="checkbox" id="wz_gh_private"> <b>我确认这是私有仓库，且不是 workspace-for-all 公共源码仓库</b>
+        </label><div class="hint">个人稿件、评审记录与研究进度绝不能推到公共源码仓库。</div></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:6px">
         <button class="btn" id="wz_gtest">测试连接</button>
@@ -344,6 +384,7 @@ WZ.steps = [
         WZ.say("wz_gres", true, "连接中…");
         const r = await API.post("test/git", {
           remote: WZ.v("wz_ghr"), user: WZ.v("wz_ghu"), token: WZ.v("wz_ght"),
+          private_confirmed: WZ.v("wz_gh_private"),
         });
         if (r.ok) WZ.say("wz_gres", true, r.empty_repo
           ? "连上了，是个空仓库——正合适，完成向导后会把工作台推上去。"
@@ -352,10 +393,11 @@ WZ.steps = [
       };
     },
     required: [{ id: "wz_ghr", label: "私有仓库地址", test: v => /^https?:\/\/.+\.git$|^git@/.test(v) },
-               { id: "wz_ght", label: "Personal Access Token" }],
+               { id: "wz_ght", label: "Personal Access Token" },
+               { id: "wz_gh_private", label: "私有仓库确认", test: v => v === true }],
     collect: () => {
       WZ.draft.secrets.github = { user: WZ.v("wz_ghu"), token: WZ.v("wz_ght"), email: WZ.v("wz_ghe") };
-      WZ.draft.config.git = { remote: WZ.v("wz_ghr") };
+      WZ.draft.config.git = { remote: WZ.v("wz_ghr"), private_confirmed: WZ.v("wz_gh_private") };
     },
   },
 
@@ -742,7 +784,8 @@ WZ.steps = [
         <tr><td>远程访问</td><td>${(c.security || {}).remote_enabled ? "已开启 " + yes(st.remote_code) + ((c.security || {}).remote_readonly ? " · 默认只读" : " · 可写") : "未开启（只在本机可用）"}</td></tr>
         <tr><td>数据量</td><td>${["manuscripts", "journals", "reading", "conferences"].map(k => `${esc(k)} ${rows(k).length}`).join(" · ")}</td></tr>
       </table>
-      ${WZ.note("点「完成设置」后：工作台会做第一次备份、把内容推到你的私有仓库（如果配了），并跑一次全库体检让你看到系统是活的。")}`;
+      ${WZ.note("点「完成设置」后：工作台会做第一次备份、把内容推到你的私有仓库（如果配了），并跑一次全库体检让你看到系统是活的。")}
+      ${WZ.result("wz_finish_error")}`;
     },
   },
 ];

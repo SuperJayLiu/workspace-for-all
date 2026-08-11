@@ -1,7 +1,7 @@
 /* 极端测试 12 · 跨库关联的界面部分（想法 ↔ 稿件 ↔ 文献 ↔ 会议）
    跑之前：python3 server.py --port 8799 --no-open &                        */
 const BASE = process.env.TEST_URL || 'http://127.0.0.1:8799/';
-const { chromium } = require('playwright');
+const { [process.env.PW_BROWSER || 'chromium']: chromium } = require('playwright');
 const FAIL = [];
 const ck = (n, c, e = '') => { if (c) console.log('  ✓ ' + n); else { FAIL.push(n); console.log('  ✗ ' + n + '  ' + e); } };
 

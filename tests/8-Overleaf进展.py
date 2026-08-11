@@ -188,3 +188,5 @@ print("\n" + "=" * 56)
 print("Overleaf 进展测试：" + ("全部通过 ✓" if not FAIL else f"{len(FAIL)} 项失败"))
 for f in FAIL:
     print("   ✗", f)
+if FAIL:
+    raise SystemExit(1)

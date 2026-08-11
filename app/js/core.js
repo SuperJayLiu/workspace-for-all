@@ -80,7 +80,11 @@ function daysBetween(a, b) {
 }
 function daysChip(n) {
   if (n == null) return "";
-  const txt = n < 0 ? `逾期 ${-n} 天` : n === 0 ? "今天" : n === 1 ? "明天" : `${n} 天后`;
+  const txt = n < 0
+    ? (typeof I18N !== "undefined" && I18N.isEnglish() ? `${-n} days overdue` : `逾期 ${-n} 天`)
+    : n === 0 ? tr("今天", "Today")
+      : n === 1 ? tr("明天", "Tomorrow")
+        : (typeof I18N !== "undefined" && I18N.isEnglish() ? `In ${n} days` : `${n} 天后`);
   const col = n < 0 ? "var(--red)" : n <= 3 ? "var(--red)" : n <= 14 ? "var(--amber)" : "var(--green)";
   return `<span class="chip-days" style="color:${col}">${txt}</span>`;
 }
@@ -89,7 +93,9 @@ function timeZone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return "?"; }
 }
 function toast(msg) {
-  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  const t = $("#toast");
+  const shown = typeof I18N !== "undefined" && I18N.isEnglish() ? I18N.translateText(String(msg || "")) : msg;
+  t.textContent = shown; t.classList.add("show");
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1900);
 }
 function debounce(fn, ms) { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; }
@@ -226,13 +232,15 @@ async function patchRec(coll, id, patch) {
 /* 配置写入必须排队。以前每次点击都发一整份 config，
    多个请求到达顺序不定，后到的旧快照会把新改动盖掉（静默回滚）。 */
 let _cfgChain = Promise.resolve();
-async function saveConfig(patch) {
+async function saveConfig(patch, opts) {
+  opts = opts || {};
   S.config = Object.assign({}, S.config, patch || {});
   const snapshot = S.config;
-  _cfgChain = _cfgChain.then(() => API.post("config", snapshot)).catch(e => {
+  const request = _cfgChain.then(() => API.post("config", snapshot));
+  _cfgChain = request.catch(e => {
     toast("设置没保存上：" + String(e.message || e).slice(0, 60));
   });
-  return _cfgChain;
+  return opts.throwOnError ? request : _cfgChain;
 }
 async function saveDevice(patch) {
   S.device = Object.assign({}, S.device, patch || {});
@@ -272,8 +280,9 @@ function renderNav() {
   };
   $("#nav").innerHTML = visibleSections().map(s => {
     const n = counts[s.id];
-    return `<button class="${s.id === S.route ? "active" : ""}" data-go="${s.id}">
-      <span class="nav-ico">${s.icon}</span><span>${s.name}</span>
+    return `<button class="${s.id === S.route ? "active" : ""}" data-go="${s.id}"
+      ${s.id === S.route ? 'aria-current="page"' : ""}>
+      <span class="nav-ico">${s.icon}</span><span>${typeof I18N !== "undefined" && I18N.isEnglish() ? s.en : s.name}</span>
       ${n ? `<span class="nav-count">${n}</span>` : ""}</button>`;
   }).join("");
   /* 自己绑一次。以前只靠 render() 里的 UI.afterRender()，
@@ -289,7 +298,11 @@ function go(id) {
   renderNav();
   render();
   $("#sidebar").classList.remove("open");
+  $("#menuBtn").setAttribute("aria-expanded", "false");
+  if (window.matchMedia("(max-width:860px)").matches) $("#sidebar").setAttribute("inert", "");
   window.scrollTo(0, 0);
+  const view = $("#view");
+  if (view) view.focus({ preventScroll: true });
 }
 
 function render() {
@@ -302,6 +315,7 @@ function render() {
     console.error(e);
   }
   UI.afterRender();
+  if (typeof I18N !== "undefined") I18N.apply($("#view"));
   if (typeof EDIT !== "undefined") { EDIT.apply(); if (EDIT.on) EDIT.decorate(); }
 }
 

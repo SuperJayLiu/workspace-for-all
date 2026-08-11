@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an improvement that fits the local-first design
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the research workflow problem rather than only the desired interface.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Design constraints
+      options:
+        - label: The proposal can preserve local ownership of data.
+          required: true
+        - label: I checked the roadmap and existing issues.
+          required: true

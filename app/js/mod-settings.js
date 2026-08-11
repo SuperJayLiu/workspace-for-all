@@ -106,6 +106,9 @@ VIEWS.settings = () => {
       <div class="field"><label>Personal Access Token</label><input id="gh_token" type="password" placeholder="仅存本机 local/secrets.json">
         <div class="hint"><a href="https://github.com/settings/tokens/new?scopes=repo&description=%E5%AD%A6%E6%9C%AF%E5%B7%A5%E4%BD%9C%E5%8F%B0" target="_blank" rel="noopener">去 GitHub 生成一个 ↗</a>
           （已经替你勾好 <code>repo</code> 权限，有效期建议选 No expiration）</div></div>
+      <div class="field wide"><label class="wz-check">
+        <input type="checkbox" id="git_private_confirm"> <b>我确认这是私有仓库，且不是 workspace-for-all 公共源码仓库</b>
+      </label><div class="hint">这里会同步个人稿件、评审记录与研究进度。公共源码仓库只能放通用程序和示例数据。</div></div>
     </div>
     <div class="small muted" style="margin-top:7px">
       ${g.remote ? `<a href="${esc(String(g.remote).replace(/\.git$/, ""))}" target="_blank" rel="noopener">打开这个仓库 ↗</a> · ` : ""}
@@ -117,6 +120,7 @@ VIEWS.settings = () => {
       <button class="btn" id="gitSync">立即同步（pull → commit → push）</button>
       <button class="btn ghost" id="ghSave">保存凭据到本机</button>
     </div>
+    <div id="gitOut" class="wz-result" role="status" aria-live="polite"></div>
     <div class="small muted" style="margin-top:9px">
       学术数据（<code>data/</code>）会同步；生活数据、密钥、备份（<code>local/</code>）不会。
       云端的 Claude 也是通过这个仓库读写你的工作台——这就是自动任务能在你笔记本合着时干活的原因。</div>`, { icon: "🔗" });
@@ -882,9 +886,29 @@ window.bindSettingsExtras = function () {
   };
   const gi = $("#gitInit");
   if (gi) gi.onclick = async () => {
-    const r = await API.post("git/init", { remote: $("#git_remote").value.trim() });
-    S.git = await API.get("git/status"); render(); updateSyncChip();
-    toast(r.ok ? "仓库就绪" : "初始化失败");
+    const out = $("#gitOut");
+    const confirmed = $("#git_private_confirm").checked;
+    if (!confirmed) {
+      out.className = "wz-result bad";
+      out.textContent = tr("请先确认该远程是私有仓库，并且不是公共源码仓库。", "Confirm that the remote is private and is not the public source repository.");
+      return;
+    }
+    gi.disabled = true;
+    out.className = "wz-result"; out.style.display = "block";
+    out.textContent = tr("正在检查并初始化…", "Checking and initializing…");
+    try {
+      const r = await API.post("git/init", {
+        remote: $("#git_remote").value.trim(), private_confirmed: true,
+      });
+      if (!r.ok) throw new Error(r.detail || r.error || "初始化失败");
+      S.git = await API.get("git/status");
+      out.className = "wz-result ok";
+      out.textContent = tr("仓库就绪", "Repository ready");
+      updateSyncChip();
+    } catch (e) {
+      out.className = "wz-result bad";
+      out.textContent = tr("初始化失败：", "Initialization failed: ") + String(e.message || e);
+    } finally { gi.disabled = false; }
   };
   const gs = $("#gitSync");
   if (gs) gs.onclick = () => doSync();

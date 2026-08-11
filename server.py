@@ -14,7 +14,7 @@
 import argparse, base64, contextlib, csv, hashlib, hmac, html, io, itertools, json, mimetypes, os, re, shutil, socket
 import traceback
 import uuid
-import subprocess, sys, threading, time, webbrowser, zipfile
+import stat, subprocess, sys, tempfile, threading, time, webbrowser, zipfile
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -58,7 +58,7 @@ COLLECTIONS = ["manuscripts", "journals", "published", "conferences",
 # 本机集合（生活数据，永不进 git）
 LOCAL_COLLECTIONS = ["diet", "exercise", "dates", "lists", "admin", "finance"]
 
-VERSION = "3.11.0"
+VERSION = "1.0.0"
 
 LIB_PATH = DATA / "library.jsonl"
 _LIB = None
@@ -148,6 +148,24 @@ def allowed_roots():
     return roots
 
 
+def sensitive_local_path(path):
+    """Paths that must never be returned through a browser file endpoint."""
+    try:
+        p = Path(path).expanduser().resolve()
+        denied_dirs = ((ROOT / ".git").resolve(), LOCAL.resolve())
+        if any(p == d or d in p.parents for d in denied_dirs):
+            return True
+        if any(part.lower() in {".git", "backups"} for part in p.parts):
+            return True
+        if p.name in {".env", "secrets.json"} or p.name.startswith(".env."):
+            return True
+        if p.suffix.lower() in {".log", ".key", ".pem"}:
+            return True
+    except Exception:
+        return True
+    return False
+
+
 def is_sane_scan_root(p):
     """这个目录适不适合被记进「允许打开」白名单。
 
@@ -197,6 +215,8 @@ def safe_path(raw):
         p = Path(s).expanduser().resolve()
     except Exception:
         return None
+    if sensitive_local_path(p):
+        return None
     for r in allowed_roots():
         try:
             if p == r or r in p.parents:
@@ -204,6 +224,44 @@ def safe_path(raw):
         except Exception:
             continue
     return None
+
+
+TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm"}
+_UPLOADED_TABLES = set()
+_UPLOADED_TABLES_LOCK = threading.Lock()
+
+
+def remember_uploaded_table(path):
+    """Register a table created by this process's upload endpoint."""
+    try:
+        p = Path(path).resolve()
+        imports = (LOCAL / "imports").resolve()
+        if p.parent != imports or p.suffix.lower() not in TABLE_SUFFIXES:
+            return False
+    except Exception:
+        return False
+    with _UPLOADED_TABLES_LOCK:
+        _UPLOADED_TABLES.add(str(p))
+    return True
+
+
+def safe_table_path(raw):
+    """Normal allowlisted table, or a narrowly scoped API-uploaded table."""
+    normal = safe_path(raw)
+    if normal is not None:
+        return normal
+    s = str(raw or "")
+    if len(s) > MAX_PATH_LEN or path_too_long(s) or any(ord(c) < 32 for c in s):
+        return None
+    try:
+        p = Path(s).expanduser().resolve()
+        imports = (LOCAL / "imports").resolve()
+    except Exception:
+        return None
+    if p.parent != imports or p.suffix.lower() not in TABLE_SUFFIXES or not p.is_file():
+        return None
+    with _UPLOADED_TABLES_LOCK:
+        return p if str(p) in _UPLOADED_TABLES else None
 
 
 RESERVED_FIELDS = {"id", "body", "_collection", "created", "updated", "_error"}
@@ -464,6 +522,23 @@ def atomic_write_text(path, text):
             pass
 
 
+def atomic_write_bytes(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}-{next(_TMP_SEQ)}")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def read_record(collection, rid):
     rid = safe_rid(rid)
     if not rid:
@@ -477,6 +552,7 @@ def read_record(collection, rid):
     # errors="replace" 让非 UTF-8 字节不至于炸；解析失败就退回「只有正文」，
     # 用户至少还能看见内容，改完一存就恢复正常。
     try:
+        st = p.stat()
         raw = p.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         return {"id": rid, "_collection": collection, "body": "",
@@ -490,7 +566,8 @@ def read_record(collection, rid):
     meta["id"] = rid
     meta["_collection"] = collection
     meta["body"] = body
-    meta["_mtime"] = round(p.stat().st_mtime, 3)
+    meta["_mtime"] = round(st.st_mtime, 3)
+    meta["_rev"] = record_revision(st)
     return meta
 
 # 解析缓存：键是文件路径，值是 (mtime_ns, size, 解析好的记录)。
@@ -504,6 +581,22 @@ def read_record(collection, rid):
 # 同一秒内改回同样长度的内容会漏判，加上 size 能挡掉绝大多数。
 _REC_CACHE = {}
 _REC_CACHE_MAX = 60000
+_RECORD_LOCKS = {}
+_RECORD_LOCKS_GUARD = threading.Lock()
+
+
+def record_revision(st):
+    """Exact optimistic-concurrency token for one on-disk record version."""
+    return f"{st.st_mtime_ns:x}-{st.st_size:x}"
+
+
+def record_lock(collection, rid):
+    key = (str(collection), str(rid))
+    with _RECORD_LOCKS_GUARD:
+        lock = _RECORD_LOCKS.get(key)
+        if lock is None:
+            lock = _RECORD_LOCKS[key] = threading.RLock()
+        return lock
 
 
 def list_records(collection):
@@ -539,6 +632,7 @@ def list_records(collection):
             meta["_collection"] = collection
             meta["body"] = body
             meta["_mtime"] = round(st.st_mtime, 3)
+            meta["_rev"] = record_revision(st)
             # 缓存满了就不再往里塞（不淘汰旧的，因为条目本身很小、
             # 而工作台的记录总数是有限的），但**删掉的文件要及时清掉**，
             # 否则批量删完一轮，缓存会一直占着那些再也用不到的条目。
@@ -567,7 +661,7 @@ MAX_STATIC = 64 * 1024 * 1024
 MAX_SERVE_FILE = 512 * 1024 * 1024
 
 
-def write_record(collection, rec, expect_mtime=None):
+def write_record(collection, rec, expect_mtime=None, expect_revision=None):
     d = coll_dir(collection)
     d.mkdir(parents=True, exist_ok=True)
     rec = dict(rec)
@@ -578,49 +672,52 @@ def write_record(collection, rec, expect_mtime=None):
         if not clean:
             raise BadBody("记录 id 不合法：" + str(rec["id"])[:60])
         rec["id"] = clean
-    # 另一台设备（或 Claude）在你编辑期间改过这条记录 → 交给用户选，绝不静默覆盖
-    rid_check = rec.get("id")
-    if rid_check and expect_mtime:
-        f = d / f"{rid_check}.md"
-        # 用浮点 mtime + 1 秒容差：整秒截断会把冲突盲区放大到 2 秒，
-        # 两台设备前后脚保存就会有一方被静默覆盖
-        try:
-            expect = float(expect_mtime)
-        except Exception:
-            expect = 0.0
-        if f.exists() and expect and f.stat().st_mtime > expect + 1.0:
-            raise Conflict(rec, read_record(collection, rid_check))
-    # 下划线开头的一律是内部字段（_mtime 冲突检测、_collection 归属、
-    # _body_more 首屏截断标记…），绝不能写进 md 文件。
-    # 写进去之后会被当成真字段读回来，从此这条记录永远带着它。
-    for _k in [k for k in rec if isinstance(k, str) and k.startswith("_")]:
-        rec.pop(_k, None)
-    # body 整个不在提交里 = 调用方明确表示「别动正文」，保留磁盘上那份。
-    # 这是前端最后一道网的服务端配合：宁可不改，也不能写进截断的正文。
-    if "body" in rec:
-        body = rec.pop("body", "")
-        # 正文必须是字符串。写进来的不一定是界面 —— 也可能是 Claude、
-        # 别的脚本、另一台机器同步过来的。给个数字或列表就 500 的话，
-        # 用户看到的只是「保存失败」，完全不知道是哪一条、为什么。
-        if body is None:
-            body = ""
-        elif not isinstance(body, str):
-            body = json.dumps(body, ensure_ascii=False, indent=2) \
-                if isinstance(body, (dict, list)) else str(body)
-    else:
-        old_rec = read_record(collection, rec.get("id")) if rec.get("id") else None
-        body = (old_rec or {}).get("body", "")
-        if not isinstance(body, str):
-            body = str(body or "")
-    rid = rec.pop("id", None) or new_id(collection, rec.get("title") or rec.get("name"))
-    rec.setdefault("created", iso())
-    rec["updated"] = iso()
-    f = d / f"{rid}.md"
-    atomic_write_text(f, dump_frontmatter(rec, body))
-    rec["id"] = rid
-    rec["body"] = body
-    rec["_collection"] = collection
-    rec["_mtime"] = round(f.stat().st_mtime, 3)
+    rid = rec.get("id") or new_id(collection, rec.get("title") or rec.get("name"))
+    with record_lock(collection, rid):
+        f = d / f"{rid}.md"
+        # Exact revisions close both the sub-second mtime blind spot and the
+        # check-then-write race: only one writer for a record can enter here.
+        if rec.get("id") and f.exists():
+            st_before = f.stat()
+            changed = False
+            if expect_revision:
+                changed = not hmac.compare_digest(str(expect_revision), record_revision(st_before))
+            elif expect_mtime not in (None, ""):
+                try:
+                    expected = float(expect_mtime)
+                    # Legacy clients receive millisecond-rounded mtimes.
+                    changed = round(st_before.st_mtime, 3) != round(expected, 3)
+                except Exception:
+                    changed = True
+            if changed:
+                raise Conflict(rec, read_record(collection, rid))
+
+        # Internal transport fields must never be persisted in frontmatter.
+        for _k in [k for k in rec if isinstance(k, str) and k.startswith("_")]:
+            rec.pop(_k, None)
+        if "body" in rec:
+            body = rec.pop("body", "")
+            if body is None:
+                body = ""
+            elif not isinstance(body, str):
+                body = json.dumps(body, ensure_ascii=False, indent=2) \
+                    if isinstance(body, (dict, list)) else str(body)
+        else:
+            old_rec = read_record(collection, rid) if rec.get("id") else None
+            body = (old_rec or {}).get("body", "")
+            if not isinstance(body, str):
+                body = str(body or "")
+        rec.pop("id", None)
+        rec.setdefault("created", iso())
+        rec["updated"] = iso()
+        atomic_write_text(f, dump_frontmatter(rec, body))
+        st_after = f.stat()
+        _REC_CACHE.pop(str(f), None)
+        rec["id"] = rid
+        rec["body"] = body
+        rec["_collection"] = collection
+        rec["_mtime"] = round(st_after.st_mtime, 3)
+        rec["_rev"] = record_revision(st_after)
     # 搜索为了省 stat 会缓存两秒的记录快照。刚存完就搜却搜不到，
     # 用户只会觉得「存丢了」，所以写完立刻让它失效。
     if searchmod is not None:
@@ -905,6 +1002,8 @@ def open_local_file(path_str):
         rp = p.resolve()
     except Exception:
         return None, "路径解析不了"
+    if sensitive_local_path(rp):
+        return None, "这个文件属于本机密钥、Git 元数据、备份或日志，不能通过浏览器读取。"
     allowed = []
     dev = get_device() or {}
     for d in (dev.get("paper_root"), dev.get("onedrive_backup_dir")):
@@ -1166,6 +1265,7 @@ def new_quote_id(existing):
 
 DEFAULT_CONFIG = {
     "owner": "",
+    "language": "zh-CN",
     "sections": ["today", "hub", "papers", "conferences",
                  "reading", "ideas", "schedule", "life", "ai", "settings"],
     "theme": {"accent": "#3b5bdb", "mode": "light", "density": "comfortable"},
@@ -1197,6 +1297,9 @@ DEFAULT_CONFIG = {
     "push": {"weekly_cron": "MON 08:00", "daily_brief": False,
              "channels": {"dingtalk": False, "email": False, "custom": False}},
     "security": {"remote_enabled": False, "remote_readonly": True, "encrypt_backup": False},
+    # Git is disabled until the user explicitly confirms a separate private
+    # data repository. A source checkout's public origin is never a sync target.
+    "git": {"private_sync_confirmed": False, "confirmed_remote": ""},
     "quicklinks": [
         {"name": "打开 Claude", "url": "https://claude.ai/new", "app": "claude://",
          "color": "#c96442", "letter": "C", "group": "AI"},
@@ -1675,6 +1778,55 @@ def git_ready():
     code, out, _ = git("rev-parse", "--is-inside-work-tree")
     return code == 0 and out == "true"
 
+
+PUBLIC_SOURCE_REMOTE = "github.com/superjayliu/workspace-for-all"
+
+
+def remote_identity(remote):
+    """Credential-free, syntax-independent identity for a Git remote."""
+    raw = str(remote or "").strip()
+    if not raw:
+        return ""
+    raw = re.sub(r"^[a-z]+://[^/@]+@", lambda m: m.group(0).split("@", 1)[0].split("//", 1)[0] + "//", raw,
+                 flags=re.I)
+    if "://" in raw:
+        try:
+            u = urlparse(raw)
+            host = (u.hostname or "").lower()
+            path = u.path.strip("/")
+            return (host + "/" + path).removesuffix(".git").lower()
+        except Exception:
+            return ""
+    m = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", raw)
+    if m:
+        return (m.group(1).lower() + "/" + m.group(2).strip("/")).removesuffix(".git").lower()
+    try:
+        return str(Path(raw).expanduser().resolve()).rstrip("/").lower()
+    except Exception:
+        return raw.rstrip("/").removesuffix(".git").lower()
+
+
+def git_sync_policy():
+    """Return whether commits may be pushed and a user-facing reason."""
+    code, remote, _ = git("remote", "get-url", "origin")
+    if code != 0 or not remote:
+        return False, "尚未配置同步仓库。"
+    identity = remote_identity(remote)
+    if identity == PUBLIC_SOURCE_REMOTE:
+        return False, "当前 origin 是公开源码仓库，绝不会把个人数据推到这里。请配置单独的私有仓库。"
+    cfg = get_config().get("git") or {}
+    if not isinstance(cfg, dict):
+        return False, "Git 同步配置损坏，需要重新确认私人数据仓库。"
+    if not cfg.get("private_sync_confirmed"):
+        return False, "这个仓库还没有被明确确认为私人数据仓库。"
+    saved = str(cfg.get("confirmed_remote") or "").strip()
+    saved_identity = (saved.rstrip("/").removesuffix(".git").lower()
+                      if "://" not in saved and not saved.startswith(("/", "."))
+                      and saved.count("/") >= 2 else remote_identity(saved))
+    if saved_identity != identity:
+        return False, "Git 远程地址已变化，需要重新确认它是私人数据仓库。"
+    return True, "ok"
+
 SYNC_LOG = LOCAL / "sync.log"
 
 def _mask(text):
@@ -1710,12 +1862,17 @@ def _rebase_in_progress():
 def git_sync(message=None):
     if not git_ready():
         return {"ok": False, "detail": "尚未初始化 git 仓库（设置页可一键初始化）"}
+    allowed, reason = git_sync_policy()
+    if not allowed:
+        _STATE["push_error"] = reason
+        sync_log("同步被安全策略阻止 · " + reason)
+        return {"ok": False, "blocked": "sync-policy", "detail": reason, "steps": []}
     steps = []
     code, out, err = git("pull", "--rebase", "--autostash")
     if code != 0 and ("no tracking information" in (err or "").lower()
                       or "couldn't find remote ref" in (err or "").lower()):
         code, out, err = 0, "（远程还是空仓库，跳过拉取）", ""
-    steps.append({"step": "pull", "code": code, "out": out or err})
+    steps.append({"step": "pull", "code": code, "out": _mask(out or err)})
     # 拉取失败**绝不能**继续往下走。
     #
     # rebase 冲突（或 autostash 应用失败）之后，工作区里躺着的是带
@@ -1746,21 +1903,35 @@ def git_sync(message=None):
                 "rebase_aborted": aborted_rebase,
                 "conflicted": conflicted.split("\n") if conflicted else [],
                 "detail": detail}
-    git("add", "-A")
-    code, out, err = git("commit", "-m", message or f"workspace sync {iso()}")
-    steps.append({"step": "commit", "code": code, "out": out or err})
-    code, out, err = git("push")
-    if code != 0 and ("no upstream" in (err or "").lower() or "set-upstream" in (err or "").lower()):
-        code, out, err = git("push", "-u", "origin", "HEAD")   # 首次推送自动建 upstream
-    steps.append({"step": "push", "code": code, "out": out or err})
-    if code not in (0,):
-        _STATE["push_error"] = f"推送失败：{_mask(err or out)[:220]}"
-        sync_log("推送失败 · " + (err or out)[:400].replace("\n", " ／ "))
+    add_code, add_out, add_err = git("add", "-A")
+    steps.append({"step": "add", "code": add_code, "out": _mask(add_out or add_err)})
+    if add_code != 0:
+        _STATE["push_error"] = "暂存失败，本次没有提交也没有推送"
+        return {"ok": False, "steps": steps, "aborted": "add", "error": _STATE["push_error"]}
+
+    commit_code, commit_out, commit_err = git("commit", "-m", message or f"workspace sync {iso()}")
+    commit_text = (commit_out or commit_err or "").lower()
+    nothing_to_commit = commit_code == 1 and any(x in commit_text for x in (
+        "nothing to commit", "no changes added to commit", "nothing added to commit"))
+    steps.append({"step": "commit", "code": commit_code,
+                  "out": _mask(commit_out or commit_err), "noop": nothing_to_commit})
+    if commit_code != 0 and not nothing_to_commit:
+        _STATE["push_error"] = "提交失败，本次没有推送：" + _mask(commit_err or commit_out)[:180]
+        sync_log(_STATE["push_error"])
+        return {"ok": False, "steps": steps, "aborted": "commit", "error": _STATE["push_error"]}
+
+    push_code, push_out, push_err = git("push")
+    if push_code != 0 and ("no upstream" in (push_err or "").lower()
+                           or "set-upstream" in (push_err or "").lower()):
+        push_code, push_out, push_err = git("push", "-u", "origin", "HEAD")
+    steps.append({"step": "push", "code": push_code, "out": _mask(push_out or push_err)})
+    if push_code != 0:
+        _STATE["push_error"] = f"推送失败：{_mask(push_err or push_out)[:220]}"
+        sync_log("推送失败 · " + (push_err or push_out)[:400].replace("\n", " ／ "))
     else:
         _STATE["push_error"] = ""
         sync_log("推送成功 · " + (message or "sync"))
-    ok = all(s["code"] in (0, 1) for s in steps)
-    return {"ok": ok, "steps": steps, "at": iso(), "error": _STATE["push_error"]}
+    return {"ok": push_code == 0, "steps": steps, "at": iso(), "error": _STATE["push_error"]}
 
 def test_git(body):
     """真正试一次 ls-remote（带凭据），成功才算配置通过。"""
@@ -1823,6 +1994,9 @@ def git_pull_bg():
     """后台拉取；有新提交就打标记，前端下次轮询会重新载入。"""
     if not git_ready():
         return
+    allowed, _ = git_sync_policy()
+    if not allowed:
+        return
     code, out, err = git("rev-parse", "HEAD")
     before = out
     c2, o2, e2 = git("pull", "--rebase", "--autostash", timeout=90)
@@ -1863,11 +2037,14 @@ def git_status():
             ahead = int(cnt or 0)
         except ValueError:
             ahead = 0
+    sync_allowed, sync_reason = git_sync_policy()
     return {"repo": True, "branch": branch, "dirty": len(dirty.splitlines()),
             "remote": remote, "last_commit": last,
             "upstream": upstream if up_code == 0 else "",
             "ahead": ahead,
             "never_pushed": up_code != 0,
+            "sync_allowed": sync_allowed,
+            "sync_reason": "" if sync_allowed else sync_reason,
             "log_tail": sync_tail(6)}
 
 
@@ -1932,7 +2109,9 @@ def decrypt_blob(blob: bytes, passphrase: str) -> bytes:
 
 def snapshot(kind="rolling"):
     dev = get_device()
-    stamp = now_local().strftime("%Y-%m-%d_%H%M")
+    # Seconds + randomness prevent manual/prerestore snapshots from silently
+    # overwriting one another when triggered in the same minute.
+    stamp = now_local().strftime("%Y-%m-%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:6]
     name = f"workspace_{stamp}_{kind}.zip"
     if kind == "daily" and dev.get("onedrive_backup_dir"):
         outdir = Path(dev["onedrive_backup_dir"]).expanduser()
@@ -1952,18 +2131,25 @@ def snapshot(kind="rolling"):
                     if p.is_file():
                         z.write(p, str(p.relative_to(ROOT)))
     except Exception as e:
+        target.unlink(missing_ok=True)
         return {"ok": False, "detail": str(e)}
     # 长期备份可选加密（口令只存本机 secrets，丢了就打不开）
     cfg = get_config()
     pw = (get_secrets().get("backup") or {}).get("passphrase", "")
-    if kind == "daily" and cfg.get("security", {}).get("encrypt_backup") and pw:
+    encrypt_requested = kind == "daily" and cfg.get("security", {}).get("encrypt_backup")
+    if encrypt_requested and not pw:
+        target.unlink(missing_ok=True)
+        return {"ok": False, "detail": "已开启备份加密，但本机没有保存口令；没有留下明文备份。"}
+    if encrypt_requested:
+        enc = target.with_suffix(".zip.enc")
         try:
             raw = target.read_bytes()
-            enc = target.with_suffix(".zip.enc")
-            enc.write_bytes(encrypt_blob(raw, pw))
+            atomic_write_bytes(enc, encrypt_blob(raw, pw))
             target.unlink()
             target = enc
         except Exception as e:
+            target.unlink(missing_ok=True)
+            enc.unlink(missing_ok=True)
             return {"ok": False, "detail": f"加密失败：{e}"}
     if kind == "rolling":
         cutoff = time.time() - int(dev.get("rolling_keep_days", 7)) * 86400
@@ -2007,6 +2193,80 @@ def backup_dirs():
     return dirs
 
 
+_RESTORE_LOCK = threading.Lock()
+MAX_RESTORE_BYTES = 4 * 1024 * 1024 * 1024
+
+
+def _extract_restore_stage(z, stage):
+    """Validate and extract only data/ and local/life/ into a fresh stage."""
+    (stage / "data").mkdir(parents=True, exist_ok=True)
+    (stage / "local" / "life").mkdir(parents=True, exist_ok=True)
+    total = 0
+    bad = []
+    for info in z.infolist():
+        name = info.filename.replace("\\", "/")
+        parts = [x for x in name.split("/") if x not in ("", ".")]
+        allowed = bool(parts and (parts[0] == "data"
+                                  or (len(parts) >= 2 and parts[:2] == ["local", "life"])))
+        if not allowed or any(x == ".." for x in parts) or name.startswith("/"):
+            bad.append(info.filename)
+            continue
+        mode = info.external_attr >> 16
+        if mode and stat.S_ISLNK(mode):
+            bad.append(info.filename)
+            continue
+        total += max(0, int(info.file_size))
+        if total > MAX_RESTORE_BYTES:
+            raise ValueError("备份解压后超过 4GB，已拒绝恢复")
+        dest = stage.joinpath(*parts)
+        if info.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with z.open(info) as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out, length=1024 * 1024)
+    if bad:
+        raise ValueError(f"备份里有数据目录之外或不安全的文件，已整份拒绝：{bad[:3]}")
+
+
+def _swap_restored_dirs(stage):
+    """Replace both restored trees, rolling back both if either swap fails."""
+    old = Path(tempfile.mkdtemp(prefix=".workspace-restore-old-", dir=str(ROOT)))
+    targets = [(DATA, stage / "data", old / "data"),
+               (LOCAL / "life", stage / "local" / "life", old / "life")]
+    swapped = []
+    preserve_old = False
+    try:
+        LOCAL.mkdir(parents=True, exist_ok=True)
+        for target, fresh, previous in targets:
+            previous.parent.mkdir(parents=True, exist_ok=True)
+            existed = target.exists()
+            if existed:
+                os.replace(target, previous)
+            try:
+                os.replace(fresh, target)
+            except Exception:
+                if existed and previous.exists():
+                    os.replace(previous, target)
+                raise
+            swapped.append((target, previous, existed))
+    except Exception:
+        for target, previous, existed in reversed(swapped):
+            try:
+                if target.exists():
+                    shutil.rmtree(target) if target.is_dir() else target.unlink()
+                if existed and previous.exists():
+                    os.replace(previous, target)
+            except Exception:
+                preserve_old = True
+        if preserve_old:
+            raise RuntimeError(f"恢复失败且自动回滚不完整；原目录保留在 {old}")
+        raise
+    finally:
+        if not preserve_old:
+            shutil.rmtree(old, ignore_errors=True)
+
+
 def restore_snapshot(path):
     # 恢复 = 把一个 zip 解压覆盖到工作台目录里，**包括 server.py 和 app/ 下的脚本**。
     # 所以「解压哪个 zip」这件事本身就是最高权限的决定，绝不能由请求随便指定路径 ——
@@ -2023,6 +2283,7 @@ def restore_snapshot(path):
         return {"ok": False,
                 "detail": "只能恢复备份目录里的工作台备份文件（workspace_*.zip）。"}
     p = rp
+    restored_name = p.name
     if not p.is_file():
         return {"ok": False, "detail": "找不到该备份"}
     # 界面上明写了「当前状态会先自动另存一份，可以反悔」。
@@ -2043,33 +2304,30 @@ def restore_snapshot(path):
         except Exception as e:
             return {"ok": False, "detail": str(e)}
     tmp_used = p.name == "_restore_tmp.zip"
+    stage = Path(tempfile.mkdtemp(prefix=".workspace-restore-stage-", dir=str(ROOT)))
     try:
-        with zipfile.ZipFile(p) as z:
-            # 备份里**只该有数据**（snapshot() 只打包 data/ 和 local/life/）。
-            # 所以恢复也只往这两处写：既防 zip-slip，也防一个被动过手脚的 zip
-            # 顺手把 server.py 或 app/js/*.js 换掉 —— 那等于下次启动就执行别人的代码。
-            root = ROOT.resolve()
-            allow = [(root / "data").resolve(), (root / "local" / "life").resolve()]
-            members, bad = [], []
-            for m in z.namelist():
-                dest = (ROOT / m).resolve()
-                if any(dest == a or a in dest.parents for a in allow):
-                    members.append(m)
-                else:
-                    bad.append(m)
-            if bad:
-                return {"ok": False,
-                        "detail": f"备份里有数据目录之外的文件，已整份拒绝：{bad[:3]}"}
-            z.extractall(ROOT, members)
+        with _RESTORE_LOCK:
+            with zipfile.ZipFile(p) as z:
+                _extract_restore_stage(z, stage)
+            _swap_restored_dirs(stage)
+            global _LIB
+            _LIB = None
+            _REC_CACHE.clear()
+            if searchmod is not None:
+                try:
+                    searchmod.invalidate_snapshot()
+                except Exception:
+                    pass
     except Exception as e:
         return {"ok": False, "detail": str(e)}
     finally:
+        shutil.rmtree(stage, ignore_errors=True)
         if tmp_used:
             try:
                 p.unlink()
             except Exception:
                 pass
-    return {"ok": True, "restored": p.name, "safety_copy": pre.get("path")}
+    return {"ok": True, "restored": restored_name, "safety_copy": pre.get("path")}
 
 # ------------------------------------------------------------- spreadsheet
 
@@ -2657,10 +2915,11 @@ class Scheduler(threading.Thread):
                 continue
             due = now.replace(hour=h, minute=m, second=0, microsecond=0)
             if now >= due:
-                snapshot("daily")
-                if git_ready():
-                    git_sync(f"daily backup {tag}")
-                self.done_daily.add(tag)
+                snap = snapshot("daily")
+                if snap.get("ok"):
+                    if git_ready() and git_sync_policy()[0]:
+                        git_sync(f"daily backup {tag}")
+                    self.done_daily.add(tag)
         if len(self.done_daily) > 40:
             self.done_daily = set(list(self.done_daily)[-20:])
         # 周一早报：到点自动生成并推送（错过则当天补做一次）
@@ -2676,8 +2935,7 @@ class Scheduler(threading.Thread):
             if now.weekday() >= wd and (now.weekday() > wd or now >= due) \
                     and tag not in self.done_daily and not already_done(tag):
                 self.done_daily.add(tag)
-                mark_done(tag)
-                def run_weekly():
+                def run_weekly(_tag=tag):
                     # 先抓雷达再写周报。顺序不能反 ——
                     # 周报要用到这次抓回来的候选，反了就永远在用上周的。
                     try:
@@ -2688,15 +2946,21 @@ class Scheduler(threading.Thread):
                     except Exception:
                         pass          # 雷达抓不到不能拖累周报
                     try:
-                        subprocess.run([sys.executable, "scripts/journal.py", "--render", "--push"],
-                                       cwd=str(ROOT), capture_output=True, timeout=180)
+                        result = subprocess.run(
+                            [sys.executable, "scripts/journal.py", "--render", "--push"],
+                            cwd=str(ROOT), capture_output=True, timeout=180)
+                        if result.returncode == 0:
+                            mark_done(_tag)
+                        else:
+                            self.done_daily.discard(_tag)
                     except Exception:
-                        pass
+                        self.done_daily.discard(_tag)
                 threading.Thread(target=run_weekly, daemon=True).start()
         except Exception:
             pass
         # 每 5 分钟后台拉一次，避免两台机器互相覆盖
-        if git_ready() and time.time() - getattr(self, "_last_pull", 0) > 300:
+        if git_ready() and git_sync_policy()[0] \
+                and time.time() - getattr(self, "_last_pull", 0) > 300:
             self._last_pull = time.time()
             try:
                 git_pull_bg()
@@ -2721,18 +2985,26 @@ class Scheduler(threading.Thread):
         otag = f"overleaf-{now:%Y-%m-%d}"
         if now.hour >= 8 and otag not in self.done_daily and not already_done(otag):
             self.done_daily.add(otag)
-            mark_done(otag)
-            threading.Thread(target=lambda: _safe(overleaf_sync_all, []), daemon=True).start()
+            def run_overleaf_daily(_otag=otag):
+                result = _safe(overleaf_sync_all, None)
+                if result is not None and all(isinstance(x, dict) and x.get("ok") for x in result):
+                    mark_done(_otag)
+                else:
+                    self.done_daily.discard(_otag)
+            threading.Thread(target=run_overleaf_daily, daemon=True).start()
         # 每天生成一次只读简报（两台电脑都关机时手机还能看）
         tag = f"digest-{now:%Y-%m-%d}"
         if now.hour >= 7 and tag not in self.done_daily and not already_done(tag):
             self.done_daily.add(tag)
-            mark_done(tag)
             try:
-                build_digest()
+                digest = build_digest()
                 build_portal()
+                if digest.get("ok"):
+                    mark_done(tag)
+                else:
+                    self.done_daily.discard(tag)
             except Exception:
-                pass
+                self.done_daily.discard(tag)
         # 每周结算
         quota_settle(get_quota())
         # 刷新自动任务队列建议（供云端 Claude 读取）
@@ -2755,6 +3027,7 @@ WRITE_MINUTES = 30             # 解锁写入后 30 分钟自动回到只读
 MAX_FAILS = 5                  # 15 分钟内错 5 次就锁 15 分钟
 FAIL_WINDOW = 900
 SERVE_PORT = 8765               # 实际监听端口，心跳与入口页要用
+TEST_MODE = False               # 测试服务不启动任何后台写入/同步任务
 
 
 def security_log(event, ip, detail=""):
@@ -2822,13 +3095,15 @@ def new_session(ip, ua, writable=False):
     return tok
 
 
-def get_session(tok):
+def get_session(tok, ip=None):
     with _SEC_LOCK:
         s = SESSIONS.get(tok or "")
         if not s:
             return None
         if s["until"] < time.time():
             SESSIONS.pop(tok, None)
+            return None
+        if ip is not None and s.get("ip") != ip:
             return None
         return s
 
@@ -3209,7 +3484,7 @@ class Handler(BaseHTTPRequestHandler):
                          "need": "lockout"}
         if route in OPEN_ROUTES:
             return None
-        sess = get_session(self._cookie_token())
+        sess = get_session(self._cookie_token(), self.client_ip)
         if not sess:
             return 401, {"error": "需要访问码", "need": "code"}
         if any(route == f or route.startswith(f) for f in REMOTE_FORBIDDEN):
@@ -3241,7 +3516,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not (cfg.get("security") or {}).get("remote_enabled"):
                     return self._send(403, "这台机器没有开启远程访问。请在它本机的「设置 → 远程访问」里打开。",
                                       "text/plain; charset=utf-8")
-                if not get_session(self._cookie_token()) and path not in ("/login.html",):
+                if not get_session(self._cookie_token(), self.client_ip) and path not in ("/login.html",):
                     return self.static("/login.html")
             return self.static(path)
         except Exception:
@@ -3305,11 +3580,11 @@ class Handler(BaseHTTPRequestHandler):
         # 实测能掐断的至少两种：路径里带 \x00（resolve 抛 ValueError）、
         # 路径太长（is_file/stat 抛 OSError: File name too long）。
         try:
+            app_root = APP.resolve()
             target = (APP / path.lstrip("/")).resolve()
             # 必须是 is_file 而不是 exists：目录也 exists，
             # 于是 GET /js 会一路走到 read_bytes 抛 IsADirectoryError。
-            ok = (str(target).startswith(str(APP.resolve()))
-                  and target.is_file())
+            ok = ((target == app_root or app_root in target.parents) and target.is_file())
             size = target.stat().st_size if ok else 0
         except (OSError, ValueError):
             return self._send(404, "Not found", "text/plain; charset=utf-8")
@@ -3350,7 +3625,7 @@ class Handler(BaseHTTPRequestHandler):
                                         "version": VERSION,
                                         "device": dev.get("device_name") or socket.gethostname()})
             if route == "auth/status":
-                sess = get_session(self._cookie_token())
+                sess = get_session(self._cookie_token(), self.client_ip)
                 sec = get_config().get("security") or {}
                 return self._send(200, {
                     "local": is_local_addr(self.client_ip),
@@ -3415,7 +3690,7 @@ class Handler(BaseHTTPRequestHandler):
                              "can_write": is_local_addr(self.client_ip) or bool(
                                  (lambda sess, sec: sess and (not sec.get("remote_readonly", True)
                                   or sess.get("write_until", 0) > time.time()))(
-                                     get_session(self._cookie_token()), cfg.get("security") or {}))},
+                                     get_session(self._cookie_token(), self.client_ip), cfg.get("security") or {}))},
                     "remoteChanged": _STATE.pop("remote_changed", False) if isinstance(_STATE, dict) else False,
                     "pushError": _STATE.get("push_error", ""),
                     "clock": (get_quota().get("clock") or {}).get(today_str(), {"in": "", "out": ""}),
@@ -3487,7 +3762,7 @@ class Handler(BaseHTTPRequestHandler):
             if route == "table/preview":
                 # 和 /api/file 一样要过白名单。以前这里直接把 path 交给 read_table，
                 # 于是「预览表格」变成了「读机器上任意 csv/txt」。
-                fp = safe_path(unquote(q.get("path", [""])[0]))
+                fp = safe_table_path(unquote(q.get("path", [""])[0]))
                 if fp is None:
                     return self._send(403, {"ok": False,
                                             "error": "这个路径不在允许的目录里（先在设置里把它加成表格来源）"})
@@ -3739,7 +4014,7 @@ class Handler(BaseHTTPRequestHandler):
                     LOGIN_FAILS.pop(ip, None)
                 want_write = route == "auth/unlock"
                 tok = self._cookie_token()
-                sess = get_session(tok)
+                sess = get_session(tok, ip)
                 if sess and want_write:
                     with _SEC_LOCK:
                         sess["write_until"] = time.time() + WRITE_MINUTES * 60
@@ -3805,7 +4080,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(k for k in body if not str(k).startswith("_")):
                     return self._send(400, {"error": "这条记录没有任何内容，没有保存"})
                 try:
-                    rec = write_record(coll, body, (body or {}).get("_mtime"))
+                    legacy_mtime = (body or {}).get("_mtime")
+                    # Existing clients intentionally omit _mtime to force an
+                    # overwrite after showing the conflict dialog. Preserve
+                    # that API contract: _rev is enforced only alongside it.
+                    exact_rev = (body or {}).get("_rev") if legacy_mtime is not None else None
+                    rec = write_record(coll, body, legacy_mtime, exact_rev)
                 except Conflict as c:
                     return self._send(409, {"conflict": True, "mine": c.mine, "theirs": c.theirs})
                 return self._send(200, rec)
@@ -4140,6 +4420,8 @@ class Handler(BaseHTTPRequestHandler):
                     git("init")
                     git("branch", "-M", "main")
                 remote = (body or {}).get("remote", "").strip()
+                private_confirmed = bool((body or {}).get("private_confirmed")
+                                         or (body or {}).get("confirm_private"))
                 gh = get_secrets().get("github", {})
                 user, token = gh.get("user", ""), gh.get("token", "")
                 # 身份：没配 commit 就会失败
@@ -4155,10 +4437,20 @@ class Handler(BaseHTTPRequestHandler):
                         url = f"https://{urllib_quote(user or 'x')}:{urllib_quote(token)}@{host_path}"
                     git("remote", "remove", "origin")
                     git("remote", "add", "origin", url)
+                    identity = remote_identity(remote)
+                    with json_txn(CONFIG_PATH, DEFAULT_CONFIG) as cfg:
+                        cfg["git"] = {
+                            "private_sync_confirmed": bool(private_confirmed
+                                                            and identity != PUBLIC_SOURCE_REMOTE),
+                            "confirmed_remote": identity if private_confirmed
+                            and identity != PUBLIC_SOURCE_REMOTE else "",
+                        }
                 if first:
                     git("add", "-A")
                     git("commit", "-m", "init scholar workspace")
-                return self._send(200, {"ok": True, **git_status()})
+                st = git_status()
+                return self._send(200, {"ok": True, **st,
+                                        "confirmation_required": not st.get("sync_allowed", False)})
             if route == "git/sync":
                 return self._send(200, git_sync((body or {}).get("message")))
             if route == "backup":
@@ -4166,7 +4458,7 @@ class Handler(BaseHTTPRequestHandler):
             if route == "restore":
                 return self._send(200, restore_snapshot((body or {}).get("path", "")))
             if route == "table/import":
-                ip = safe_path(body.get("path", ""))
+                ip = safe_table_path(body.get("path", ""))
                 if ip is None:
                     return self._send(403, {"ok": False,
                                             "error": "这个路径不在允许的目录里（先在设置里把它加成表格来源）"})
@@ -4186,13 +4478,14 @@ class Handler(BaseHTTPRequestHandler):
                                             "error": f"文件内容不是合法的 base64：{str(e)[:80]}"})
                 if len(raw) > 40 * 1024 * 1024:
                     return self._send(200, {"ok": False, "detail": "文件过大（上限 40MB）"})
-                if Path(name).suffix.lower() not in (".csv", ".tsv", ".txt", ".xlsx", ".xlsm"):
+                if Path(name).suffix.lower() not in TABLE_SUFFIXES:
                     return self._send(400, {"ok": False,
                                             "error": "只支持 .csv / .tsv / .txt / .xlsx 表格文件"})
                 dest = LOCAL / "imports"
                 dest.mkdir(parents=True, exist_ok=True)
                 fp = dest / name
-                fp.write_bytes(raw)
+                atomic_write_bytes(fp, raw)
+                remember_uploaded_table(fp)
                 try:
                     headers, rows = read_table(fp)
                 except (ValueError, OSError) as e:
@@ -4315,15 +4608,18 @@ def first_run_seed():
 
 
 def main():
-    global SERVE_PORT
+    global SERVE_PORT, TEST_MODE
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-open", action="store_true")
+    ap.add_argument("--test-mode", action="store_true",
+                    help="测试专用：禁用心跳、调度器、后台同步与自动报告")
     ap.add_argument("--lan", action="store_true",
                     help="同时监听局域网，手机/另一台电脑才连得上（需要先设访问码）")
     args = ap.parse_args()
     SERVE_PORT = args.port
+    TEST_MODE = bool(args.test_mode)
     ensure_dirs()
     first_run_seed()
     host = args.host
@@ -4338,11 +4634,12 @@ def main():
             _save_json(CONFIG_PATH, cfg)
             print("已自动打开「允许远程访问」开关。")
         host = "0.0.0.0"
-    try:
-        write_presence(args.port)
-    except Exception:
-        pass
-    Scheduler().start()
+    if not TEST_MODE:
+        try:
+            write_presence(args.port)
+        except Exception:
+            pass
+        Scheduler().start()
     srv = WorkspaceServer((host, args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"
     print(f"学术工作台已启动 → {url}\n数据目录: {ROOT}\n按 Ctrl+C 停止。")

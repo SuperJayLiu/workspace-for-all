@@ -1,7 +1,7 @@
 /* 极端测试 9 · 这一轮的界面改动
    跑之前：python3 server.py --port 8799 --no-open &                        */
 const BASE = process.env.TEST_URL || 'http://127.0.0.1:8799/';
-const { chromium } = require('playwright');
+const { [process.env.PW_BROWSER || 'chromium']: chromium } = require('playwright');
 const FAIL = [];
 const ck = (n, c, e = '') => { if (c) console.log('  ✓ ' + n); else { FAIL.push(n); console.log('  ✗ ' + n + '  ' + e); } };
 

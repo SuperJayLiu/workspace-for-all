@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible problem without including private research data
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Remove names, paper text, credentials, local paths, and other personal data before posting. Security vulnerabilities belong in private vulnerability reporting, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown under Settings, or the Git tag/commit.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Safari 18, Chrome 140, Firefox 142
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use generic sample records rather than private data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, personal records, names, email addresses, hostnames, IP addresses, and absolute paths.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

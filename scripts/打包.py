@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-打包成给别人的压缩包
-============================================================================
+"""Build a deterministic, privacy-audited Scholar Workspace ZIP.
 
-    python3 scripts/打包.py            两个版本都出
-    python3 scripts/打包.py --public   只出公开版
-    python3 scripts/打包.py --check    只检查，不生成（看看会漏什么进去）
-
-为什么要有这个脚本，而不是手动拖文件夹压缩：
-手动压最容易出的两类事故是**漏删**和**漏加** —— 漏删就是把 local/、密钥、
-运行时状态、被测试写花的 config 一起发出去；漏加就是新写的模块忘了放进去，
-对方下下来一跑就报 ImportError。这两件事都不该靠人记。
-
-两个版本的箴言库**条数完全一样**（417 条，一条不删），区别只是署名：
-公开版会把「我说」换成实名、把查不到出处的补成「Jay摘抄」；
-个人版原样保留 —— 那是你自己的库，「我说」「摘抄」你自己看得懂。
+Normal builds use Git's tracked-file manifest, so an editor backup, runtime
+report, device heartbeat, or other untracked file cannot slip into a release.
+`--include-untracked` exists only for validating a not-yet-staged development
+tree; the same allowlist and privacy audit still apply.
 """
 import argparse
+import ast
 import json
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,324 +19,291 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_DIR = ROOT.parent
-NAME = "学术工作台"
+DEFAULT_OUT_DIR = ROOT.parent
 
-# ---------------------------------------------------------------- 收谁 / 不收谁
-
-# 整个目录不收
+ALLOWED_DIRS = {"app", "data", "docs", "scripts", "skills", "tests"}
+ALLOWED_TOP_FILES = {
+    "server.py", "services.py", "library.py", "search.py", "pdfmeta.py", "radar.py", "升级.py",
+    "README.md", "README.en.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
+    "CHANGELOG.md", "ROADMAP.md", "LICENSE", "使用教程.md", "交付说明.md",
+    "package.json", "package-lock.json",
+    "安装-Mac.command", "安装-Windows.bat", "启动.command", "启动.bat",
+    "局域网启动.command", "局域网启动.bat", "卸载自启-Mac.command", "卸载自启-Windows.bat",
+}
 SKIP_DIRS = {
-    "local",            # 生活数据、密钥、设备配置、备份 —— 一条都不能出去
-    "attachments",      # 你自己的 PDF
-    ".git", "__pycache__", ".pytest_cache", ".idea", ".vscode",
-    "_to_delete", "_stage", "_restore", "内部文档",   # 内部文档是给我和你看的，不是给用户看的
-    "data/presence",    # 局域网互相看见对方在线的心跳文件，装完自己会生成
-    "data/_claude/audits",
+    "local", "attachments", ".git", "node_modules", "__pycache__", ".pytest_cache",
+    ".idea", ".vscode", "_to_delete", "_stage", "_restore", "内部文档",
+    "data/presence", "data/_claude/audits",
 }
-
-# 单个文件不收
 SKIP_FILES = {
-    "portal.html",                  # 每次开机自动生成，里面有内网 IP
-    "layout-mockup.html",           # 设计稿
-    "layout-mockup-v2.html",
-    "data/_claude/next-run.json",   # 运行时状态
-    "data/_claude/radar-raw.json",
-    "data/reports/weekly-2026-W31.md",
+    "portal.html", "layout-mockup.html", "layout-mockup-v2.html",
+    "data/_claude/next-run.json", "data/_claude/radar-raw.json",
 }
-
-SKIP_SUFFIX = {".zip", ".pyc", ".pyo", ".log", ".tmp", ".DS_Store"}
-SKIP_GLOB = ("*.tmp*", "*.bak", "._*")
-
-# 必须在包里的文件。少一个就说明打包漏了东西 —— 宁可报错也不要发一个跑不起来的包。
-MUST_HAVE = [
-    "server.py", "services.py", "library.py", "search.py", "pdfmeta.py",
-    "radar.py", "升级.py",
-    "app/index.html", "app/js/core.js",
+SKIP_SUFFIXES = {".zip", ".pyc", ".pyo", ".log", ".tmp", ".DS_Store"}
+MUST_HAVE = {
+    "server.py", "services.py", "library.py", "search.py", "pdfmeta.py", "radar.py", "升级.py",
+    "app/index.html", "app/js/core.js", "app/js/i18n.js",
     "scripts/journal.py", "scripts/audit.py", "scripts/radar.py", "scripts/primer.py",
     "skills/lit-radar/SKILL.md", "skills/weekly-journal/SKILL.md",
-    "tests/跑全部.sh", "tests/19-学术雷达.py",
-    "README.md", "使用教程.md", "LICENSE",
+    "tests/跑全部.sh", "tests/platform_smoke.py", "tests/19-学术雷达.py", "tests/21-后端隐私与恢复.py",
+    "README.md", "README.en.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE",
     "安装-Mac.command", "安装-Windows.bat", "启动.command", "启动.bat",
     "data/config.json", "data/quotes.json",
-]
+}
 
-# 绝不能出现在包里的东西。这是最后一道闸 —— 上面的规则万一写漏了，这里兜住。
-FORBIDDEN_PATH = re.compile(r"(^|/)(local|attachments|\.git|__pycache__|_to_delete)(/|$)")
-# 包里每个文本文件都会被扫一遍，看有没有长得像密钥的东西
 SECRET_PATTERNS = [
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), "GitHub token"),
-    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), "OpenAI/Anthropic key"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS key"),
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "私钥"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), "AI API key"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS access key"),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), "Slack token"),
 ]
-# 这些文件本来就在讲「密钥长什么样」，扫到不算数
-SECRET_WHITELIST = {"scripts/打包.py", "使用教程.md", "交付说明.md", "README.md",
-                    "docs/安装与使用.md", "tests/README.md"}
+PERSONAL_PATH_PATTERNS = [
+    re.compile(r"/Users/(?!(?:me|you|username|your-name|example)/)[A-Za-z0-9._-]+/"),
+    re.compile(r"/home/(?!(?:user|me|you|username|example)/)[A-Za-z0-9._-]+/"),
+    re.compile(r"[A-Za-z]:\\Users\\(?!(?:你|me|you|username|your-name|example)\\)[^\\\r\n]+\\", re.IGNORECASE),
+]
+
+PUBLIC_QUOTA = {
+    "rate_per_week": 14.0, "week_start": "", "spent_this_week": 0.0,
+    "history": [], "runs": [], "blocked_events": [], "activity": {},
+    "overrides": {"tonight_boost": False, "silent_week": False}, "unread_reports": 0,
+}
+PUBLIC_QUEUE = {"progress": "", "tasks": []}
 
 
-def rel(p: Path) -> str:
-    return p.relative_to(ROOT).as_posix()
+def rel(path):
+    return path.relative_to(ROOT).as_posix()
 
 
-def keep(p: Path) -> bool:
-    r = rel(p)
-    parts = r.split("/")
-    for i in range(len(parts)):
-        if "/".join(parts[: i + 1]) in SKIP_DIRS or parts[i] in SKIP_DIRS:
-            return False
-    if r in SKIP_FILES or p.suffix in SKIP_SUFFIX or p.name in SKIP_SUFFIX:
+def git_manifest(include_untracked=False):
+    args = ["git", "ls-files", "-z"]
+    if include_untracked:
+        args = ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]
+    result = subprocess.run(args, cwd=ROOT, capture_output=True, check=False)
+    if result.returncode:
+        raise RuntimeError("a Git worktree is required for safe packaging")
+    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+
+
+def allowed(relative):
+    path = Path(relative)
+    if path.name.startswith("._") or path.name.endswith((".bak", "~")):
         return False
-    for g in SKIP_GLOB:
-        if p.match(g):
+    if path.suffix in SKIP_SUFFIXES or relative in SKIP_FILES:
+        return False
+    if relative.startswith("data/reports/weekly-"):
+        return False
+    parts = path.parts
+    for index in range(len(parts)):
+        if "/".join(parts[: index + 1]) in SKIP_DIRS or parts[index] in SKIP_DIRS:
             return False
-    return True
+    return (len(parts) == 1 and relative in ALLOWED_TOP_FILES) or (parts and parts[0] in ALLOWED_DIRS)
 
 
-def collect():
-    return sorted((p for p in ROOT.rglob("*") if p.is_file() and keep(p)), key=rel)
+def collect(include_untracked=False):
+    files = []
+    for relative in git_manifest(include_untracked):
+        if not allowed(relative):
+            continue
+        path = ROOT / relative
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to package symlink: {relative}")
+        if path.is_file():
+            files.append(path)
+    return sorted(files, key=rel)
 
 
-# ---------------------------------------------------------------- 打包前的清洗
-
-def clean_config(raw: dict) -> dict:
-    """把 data/config.json 恢复成「干净的出厂设置」。
-
-    为什么需要：跑界面测试的时候，浏览器是真的在点你的设置页，config.json
-    会被写进一堆测试值 —— 早期发出去的包里就带着测试写的嵌套垃圾键。
-    与其人工挑，不如直接拿 server.py 里的 DEFAULT_CONFIG 当准绳：
-    只保留默认配置里有的键，其余一律丢掉。
-    """
-    sys.path.insert(0, str(ROOT))
-    import server as srv  # noqa: E402
-
-    out = json.loads(json.dumps(srv.DEFAULT_CONFIG))
-    dropped = sorted(set(raw) - set(out))
-    # 界面外观这类无害的个人偏好可以留下，别的都用默认值
-    for k in ("theme", "brand", "layout", "quicklinks", "sections",
-              "today_horizon_days", "stale_manuscript_days"):
-        if k in raw:
-            out[k] = raw[k]
-    # 新装的人应该从头走一遍向导，且不该继承任何人的身份/路径/密钥相关设置
-    out["owner"] = ""
-    out["setup"] = {"done": False, "step": 0, "completed_at": ""}
-    out["lib_folders"] = []
-    out["security"] = json.loads(json.dumps(srv.DEFAULT_CONFIG["security"]))
-    return out, dropped
+def literal_assignment(path, variable):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == variable for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise RuntimeError(f"could not find literal {variable} in {path.name}")
 
 
-def clean_quotes(raw: dict, public: bool):
-    """公开版**一条不删**，只把空着的出处补上一个诚实的署名。
-
-    箴言库里混着四类东西，公开版各按各的署：
-
-      1. 已经有出处的（《道德经》、苏轼、Feynman…）—— 原样不动。
-      2. 出处写「我说」的 71 条 —— 是 Jay 自己写的。在他自己的库里
-         「我说」很自然，但发给外人看，「我」是谁就没人知道了，所以署实名。
-      3. 出处写「摘抄」但其实是这个工作台自带的语料（id 以 jeef 开头的那批，
-         当初是为这个工作台写的、不是从别处抄的）—— 署「工作台自带」。
-         这批要是也署成「Jay摘抄」，等于把他没抄过的话算到他头上。
-      4. 剩下真正查不到出处的 —— 署「Jay摘抄」。
-
-    第 4 类是大头。这些多半是网络流传的无名句子、剧集台词、歌词片段，
-    本来就没有可考的作者。`scripts/补出处.py` 已经查过一遍，能查实的都补了
-    真实出处；查不实的宁可写「Jay摘抄」，也不安一个看着很像的作者上去 ——
-    署错名比不署名坏得多。
-
-    个人版原样保留：那是他自己的库，「我说」「摘抄」他自己看得懂。
-    """
-    qs = raw.get("quotes") or []
-    if not public:
-        return raw, {}
-    ANON = {"摘抄", ""}
-    out, stat = [], {"总数": len(qs), "我说→Jay": 0, "→工作台自带": 0, "→Jay摘抄": 0}
-    for q in qs:
-        q = dict(q)
-        s = (q.get("s") or "").strip()
-        if s == "我说":
-            q["s"] = "Jay"
-            stat["我说→Jay"] += 1
-        elif s in ANON:
-            if str(q.get("id") or "").startswith("jeef"):
-                q["s"] = "工作台自带"
-                stat["→工作台自带"] += 1
-            else:
-                q["s"] = "Jay摘抄"
-                stat["→Jay摘抄"] += 1
-        out.append(q)
-    return dict(raw, quotes=out), stat
+def application_version():
+    version = literal_assignment(ROOT / "server.py", "VERSION")
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
+        raise RuntimeError(f"server VERSION is not strict semver: {version!r}")
+    return version
 
 
-# ---------------------------------------------------------------- 出包前的自检
+def clean_config(stage):
+    defaults = literal_assignment(stage / "server.py", "DEFAULT_CONFIG")
+    defaults["owner"] = ""
+    defaults["setup"] = {"done": False, "step": 0, "completed_at": ""}
+    defaults["lib_folders"] = []
+    if isinstance(defaults.get("profile"), dict):
+        defaults["profile"] = {"name": "", "city": "", "lat": None, "lon": None, "field": "", "keywords": []}
+    (stage / "data/config.json").write_text(
+        json.dumps(defaults, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
-def audit(stage: Path, files):
-    """包已经摊在临时目录里了，发出去之前最后扫一遍。"""
+
+def source_config_problems():
+    """Fail closed when the repository factory config drifts from server defaults."""
+    defaults = literal_assignment(ROOT / "server.py", "DEFAULT_CONFIG")
+    source = json.loads((ROOT / "data/config.json").read_text(encoding="utf-8"))
+    unknown = sorted(set(source) - set(defaults))
+    missing = sorted(set(defaults) - set(source))
     problems = []
-
-    for r in files:
-        if FORBIDDEN_PATH.search(r):
-            problems.append(f"不该带的路径进包了：{r}")
-
-    have = set(files)
-    for m in MUST_HAVE:
-        if m not in have:
-            problems.append(f"少了必需文件：{m}")
-
-    # 密钥扫描
-    for r in files:
-        if r in SECRET_WHITELIST:
-            continue
-        f = stage / r
-        if f.suffix in {".png", ".jpg", ".gif", ".pdf", ".ico", ".woff", ".woff2"}:
-            continue
-        try:
-            txt = f.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        for pat, what in SECRET_PATTERNS:
-            m = pat.search(txt)
-            if m:
-                problems.append(f"{r} 里疑似有 {what}：{m.group(0)[:12]}…")
-
-    # 每个 .py 都得能编译 —— 免得发出去一个语法错的包。
-    #
-    # 这里**必须**用内置的 compile()，不能图省事去 subprocess 调 py_compile：
-    # py_compile 会真的往旁边写 __pycache__/*.pyc，也就是说「自检」这个动作
-    # 本身会往待打包的目录里塞进 26 个字节码文件，然后被一起压进包发出去。
-    # 第一版就是这么翻的车 —— 检查工具污染了被检查的东西。
-    for r in files:
-        if r.endswith(".py"):
-            try:
-                compile((stage / r).read_text(encoding="utf-8"), r, "exec")
-            except SyntaxError as e:
-                problems.append(f"{r} 语法错：第 {e.lineno} 行 {e.msg}")
-            except Exception as e:
-                problems.append(f"{r} 读不了：{e}")
-
-    # JSON 都得能解析
-    for r in files:
-        if r.endswith(".json"):
-            try:
-                json.loads((stage / r).read_text(encoding="utf-8"))
-            except Exception as e:
-                problems.append(f"{r} 不是合法 JSON：{e}")
-
-    # 箴言：一条都不能少，而且每条都得有出处。
-    # 界面上出处是显示在句子下面那一行的，空着会渲染成一个孤零零的破折号。
-    qs = json.loads((stage / "data/quotes.json").read_text(encoding="utf-8"))["quotes"]
-    blank = [q for q in qs if not (q.get("s") or "").strip()]
-    if blank:
-        problems.append(f"有 {len(blank)} 条箴言没有出处，"
-                        f"例如：{blank[0].get('t', '')[:30]}")
-    empty = [q for q in qs if not str(q.get("t") or "").strip()]
-    if empty:
-        problems.append(f"有 {len(empty)} 条箴言正文是空的")
-
+    if unknown:
+        problems.append(f"data/config.json has unknown top-level keys: {', '.join(unknown)}")
+    if missing:
+        problems.append(f"data/config.json is missing default top-level keys: {', '.join(missing)}")
     return problems
 
 
-def build(version, public, files, check_only=False):
-    tag = "-公开版" if public else ""
-    stage_root = Path(tempfile.mkdtemp(prefix="pack-"))
-    stage = stage_root / NAME
-    rels = []
+def reset_runtime_state(stage):
+    states = {
+        "data/_claude/quota.json": PUBLIC_QUOTA,
+        "data/_claude/queue.json": PUBLIC_QUEUE,
+    }
+    for relative, value in states.items():
+        path = stage / relative
+        if path.exists():
+            path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for relative in ("data/_claude/inbox.md",):
+        path = stage / relative
+        if path.exists():
+            path.write_text("", encoding="utf-8")
 
-    for p in files:
-        r = rel(p)
-        dst = stage / r
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(p, dst)
-        rels.append(r)
 
-    # 清洗 config
-    cfg_raw = json.loads((stage / "data/config.json").read_text(encoding="utf-8"))
-    cfg, dropped = clean_config(cfg_raw)
-    (stage / "data/config.json").write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+def audit(stage, relative_files):
+    problems = []
+    have = set(relative_files)
+    for required in sorted(MUST_HAVE - have):
+        problems.append(f"missing required file: {required}")
+    forbidden_runtime = [r for r in relative_files if r.startswith("data/presence/") or r.startswith("data/reports/weekly-")]
+    problems.extend(f"runtime state must not be packaged: {r}" for r in forbidden_runtime)
 
-    # 清洗箴言
-    q_raw = json.loads((stage / "data/quotes.json").read_text(encoding="utf-8"))
-    q, qstat = clean_quotes(q_raw, public)
-    (stage / "data/quotes.json").write_text(
-        json.dumps(q, ensure_ascii=False, indent=2), encoding="utf-8")
+    for relative in relative_files:
+        path = stage / relative
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".woff", ".woff2"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for pattern, label in SECRET_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                problems.append(f"{relative} contains a possible {label}: {match.group(0)[:12]}…")
+        for pattern in PERSONAL_PATH_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                problems.append(f"{relative} contains a machine-specific user path: {match.group(0)[:60]}")
+        if relative.endswith(".py"):
+            try:
+                compile(text, relative, "exec")
+            except SyntaxError as exc:
+                problems.append(f"{relative} has invalid Python syntax at line {exc.lineno}: {exc.msg}")
+        if relative.endswith((".json", ".webmanifest")):
+            try:
+                json.loads(text)
+            except Exception as exc:
+                problems.append(f"{relative} is invalid JSON: {exc}")
 
-    # 空目录也要在，不然第一次写入会报错
-    for d in ("local", "attachments", "data/presence"):
-        (stage / d).mkdir(parents=True, exist_ok=True)
-        (stage / d / ".gitkeep").write_text("", encoding="utf-8")
+    config = json.loads((stage / "data/config.json").read_text(encoding="utf-8"))
+    if config.get("owner") or config.get("lib_folders") or any((config.get("profile") or {}).values()):
+        problems.append("public config still contains identity or machine-path fields")
+    quota = json.loads((stage / "data/_claude/quota.json").read_text(encoding="utf-8"))
+    if quota != PUBLIC_QUOTA:
+        problems.append("AI quota runtime state was not reset")
+    quotes = json.loads((stage / "data/quotes.json").read_text(encoding="utf-8")).get("quotes", [])
+    if any(not str(item.get("t") or "").strip() or not str(item.get("s") or "").strip() for item in quotes):
+        problems.append("every bundled quote must have text and attribution")
+    return problems
 
-    problems = audit(stage, rels)
-    print(f"\n=== {NAME} v{version}{tag} ===")
-    print(f"  文件 {len(rels)} 个")
-    if dropped:
-        print(f"  config 里清掉了 {len(dropped)} 个非默认键：{', '.join(dropped[:8])}"
-              + ("…" if len(dropped) > 8 else ""))
-    if qstat:
-        print(f"  箴言 {qstat['总数']} 条全保留；补署名："
-              f"「我说」→Jay {qstat['我说→Jay']} 条、"
-              f"→工作台自带 {qstat['→工作台自带']} 条、"
-              f"→Jay摘抄 {qstat['→Jay摘抄']} 条")
-    if problems:
-        print("  ✗ 自检没过：")
-        for x in problems:
-            print("     -", x)
-        shutil.rmtree(stage_root, ignore_errors=True)
-        return None, problems
-    print("  ✓ 自检通过（无密钥 · 无 local/ · 必需文件齐 · py/json 都能读）")
 
-    if check_only:
-        shutil.rmtree(stage_root, ignore_errors=True)
-        return None, []
+def build(public, files, output_dir, check_only=False):
+    version = application_version()
+    root_name = f"Scholar-Workspace-v{version}" if public else f"学术工作台-v{version}"
+    archive_name = f"{root_name}.zip"
+    source_problems = source_config_problems()
+    if source_problems:
+        print(f"\n=== {root_name} ===")
+        for problem in source_problems:
+            print(f"  ✗ {problem}")
+        return None, source_problems
+    with tempfile.TemporaryDirectory(prefix="scholar-package-") as temporary:
+        stage_root = Path(temporary)
+        stage = stage_root / root_name
+        relative_files = []
+        for source in files:
+            relative = rel(source)
+            target = stage / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            relative_files.append(relative)
 
-    out = OUT_DIR / f"{NAME}-v{version}{tag}.zip"
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        for f in sorted(stage.rglob("*")):
-            if f.is_file():
-                z.write(f, f.relative_to(stage_root).as_posix())
-    shutil.rmtree(stage_root, ignore_errors=True)
+        clean_config(stage)
+        reset_runtime_state(stage)
+        for directory in ("local", "attachments", "data/presence"):
+            path = stage / directory
+            path.mkdir(parents=True, exist_ok=True)
+            (path / ".gitkeep").write_text("", encoding="utf-8")
 
-    # 压完再拆开数一遍。前面那些检查看的都是「我打算放什么」，
-    # 这一步看的是「实际躺在压缩包里的是什么」—— 只有这个才作数。
-    with zipfile.ZipFile(out) as z:
-        got = {n[len(NAME) + 1:] for n in z.namelist() if not n.endswith("/")}
-    want = set(rels) | {"local/.gitkeep", "attachments/.gitkeep", "data/presence/.gitkeep"}
-    extra = sorted(got - want)
-    missing = sorted(want - got)
-    if extra or missing:
-        print("  ✗ 压缩包里的东西和计划的对不上：")
-        for x in extra[:10]:
-            print("     多了：", x)
-        for x in missing[:10]:
-            print("     少了：", x)
-        return None, ["压缩包内容与计划不符"]
-    print(f"  ✓ 压缩包核对无误（{len(got)} 个文件，与计划一致）")
-    print(f"  → {out}  ({out.stat().st_size / 1024:.0f} KB)")
-    return out, []
+        problems = audit(stage, relative_files)
+        print(f"\n=== {root_name} ===")
+        print(f"  files: {len(relative_files)}")
+        if problems:
+            print("  ✗ package audit failed")
+            for problem in problems:
+                print(f"    - {problem}")
+            return None, problems
+        print("  ✓ allowlist, privacy, syntax, JSON, config, and runtime-state checks passed")
+        if check_only:
+            return None, []
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output = output_dir / archive_name
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+            for path in sorted(stage.rglob("*")):
+                if path.is_file():
+                    info = zipfile.ZipInfo(
+                        path.relative_to(stage_root).as_posix(), date_time=(1980, 1, 1, 0, 0, 0)
+                    )
+                    info.create_system = 3
+                    mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
+                    info.external_attr = (stat.S_IFREG | mode) << 16
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+
+        expected = set(relative_files) | {"local/.gitkeep", "attachments/.gitkeep", "data/presence/.gitkeep"}
+        with zipfile.ZipFile(output) as archive:
+            prefix = root_name + "/"
+            actual = {name[len(prefix):] for name in archive.namelist() if name.startswith(prefix) and not name.endswith("/")}
+        if actual != expected:
+            output.unlink(missing_ok=True)
+            return None, [f"archive manifest mismatch: {len(actual - expected)} extra, {len(expected - actual)} missing"]
+        print(f"  ✓ archive manifest verified ({len(actual)} files)")
+        print(f"  → {output} ({output.stat().st_size / 1024:.0f} KB)")
+        return output, []
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--public", action="store_true", help="只出公开版")
-    ap.add_argument("--personal", action="store_true", help="只出个人版")
-    ap.add_argument("--check", action="store_true", help="只自检，不生成文件")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--public", action="store_true", help="build only the sanitized public archive")
+    parser.add_argument("--personal", action="store_true", help="build only the personal-name archive")
+    parser.add_argument("--check", action="store_true", help="audit the staged contents without writing a ZIP")
+    parser.add_argument("--include-untracked", action="store_true", help="development only: include allowlisted, nonignored untracked files")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUT_DIR)
+    args = parser.parse_args()
 
-    sys.path.insert(0, str(ROOT))
-    import server as srv
-    version = srv.VERSION
-
-    files = collect()
+    try:
+        files = collect(args.include_untracked)
+    except Exception as exc:
+        print(f"✗ cannot create safe package manifest: {exc}", file=sys.stderr)
+        return 1
     both = not (args.public or args.personal)
-    bad = []
+    problems = []
     if args.personal or both:
-        _, p = build(version, False, files, args.check)
-        bad += p
+        _, found = build(False, files, args.output_dir.resolve(), args.check)
+        problems.extend(found)
     if args.public or both:
-        _, p = build(version, True, files, args.check)
-        bad += p
-    print()
-    return 1 if bad else 0
+        _, found = build(True, files, args.output_dir.resolve(), args.check)
+        problems.extend(found)
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

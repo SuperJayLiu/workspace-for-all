@@ -1,5 +1,5 @@
 const BASE = process.env.TEST_URL || 'http://127.0.0.1:8799/';
-const { chromium } = require('playwright');
+const { [process.env.PW_BROWSER || 'chromium']: chromium } = require('playwright');
 
 const FAIL = [];
 const check = (name, cond, extra = '') => {

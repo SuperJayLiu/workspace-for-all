@@ -4,9 +4,13 @@
 function applyBrand() {
   const b = S.config.brand || {};
   const t = $("#brandTitle"), sub = $("#brandSub");
-  if (t) t.textContent = b.title || "学术工作台";
-  if (sub) sub.textContent = b.sub || "Scholar Workspace";
-  document.title = (b.title || "学术工作台") + " · " + (b.sub || "Scholar Workspace");
+  const defaultTitle = !b.title || b.title === "学术工作台";
+  const defaultSubtitle = !b.sub || b.sub === "Scholar Workspace";
+  const title = typeof I18N !== "undefined" && I18N.isEnglish() && defaultTitle ? "Scholar Workspace" : (b.title || "学术工作台");
+  const subtitle = typeof I18N !== "undefined" && I18N.isEnglish() && defaultSubtitle ? "Local-first research command center" : (b.sub || "Scholar Workspace");
+  if (t) t.textContent = title;
+  if (sub) sub.textContent = subtitle;
+  document.title = title + " · " + subtitle;
 }
 
 function applyTheme() {
@@ -26,17 +30,21 @@ function updateSyncChip() {
   const dot = $("#syncDot"), txt = $("#syncText");
   if (g.last_error || S.pushError) {
     dot.className = "dot err";
-    txt.textContent = "同步出错，点此查看";
+    txt.textContent = tr("同步出错，点此查看", "Sync error — click for details");
     $("#syncChip").title = g.last_error || S.pushError;
-  } else if (!g.repo) { dot.className = "dot"; txt.textContent = "本地模式（未接 Git）"; }
-  else if (g.dirty) { dot.className = "dot warn"; txt.textContent = `待同步 ${g.dirty} 处`; }
-  else { dot.className = "dot ok"; txt.textContent = "已同步"; }
+  } else if (!g.repo) { dot.className = "dot"; txt.textContent = tr("本地模式（未接 Git）", "Local mode (Git not connected)"); }
+  else if (g.dirty) { dot.className = "dot warn"; txt.textContent = I18N.isEnglish() ? `${g.dirty} changes to sync` : `待同步 ${g.dirty} 处`; }
+  else { dot.className = "dot ok"; txt.textContent = tr("已同步", "Synced"); }
   const c = S.clock || { in: "", out: "" };
   const working = c.in && !c.out;
+  const clockText = working
+    ? (I18N.isEnglish() ? `🔥 Doing great work · since ${esc(c.in)}` : `🔥 正在做伟大的事 · ${esc(c.in)} 起`)
+    : (c.out
+      ? (I18N.isEnglish() ? `🌙 Finished for today · ${esc(c.out)}` : `🌙 今天就先忙到这儿吧！${esc(c.out)}`)
+      : tr("✨ 开始做伟大的事吧！", "✨ Start a focused session"));
   $("#deviceMeta").innerHTML =
     `<button class="clock-btn ${working ? "on" : ""}" id="clockBtn">
-       ${working ? `🔥 正在做伟大的事 · ${esc(c.in)} 起`
-         : (c.out ? `🌙 今天就先忙到这儿吧！${esc(c.out)}` : "✨ 开始做伟大的事吧！")}
+       ${clockText}
      </button>
      <div>${esc(S.device.device_name || "")} · ${esc(timeZone())} · v${esc(S.version || "")}</div>`;
   const cb = $("#clockBtn");
@@ -144,7 +152,24 @@ function updateLockChip() {
 function bindGlobal() {
   bindErrorGuard();
   updateLockChip();
-  $("#menuBtn").onclick = () => $("#sidebar").classList.toggle("open");
+  const menu = $("#menuBtn"), sidebar = $("#sidebar");
+  const setDrawer = open => {
+    const mobile = window.matchMedia("(max-width:860px)").matches;
+    const shown = mobile && !!open;
+    sidebar.classList.toggle("open", shown);
+    menu.setAttribute("aria-expanded", String(shown));
+    if (mobile && !shown) sidebar.setAttribute("inert", "");
+    else sidebar.removeAttribute("inert");
+  };
+  menu.onclick = () => setDrawer(!sidebar.classList.contains("open"));
+  setDrawer(false);
+  window.addEventListener("resize", debounce(() => setDrawer(sidebar.classList.contains("open")), 100));
+  const langBtn = $("#langBtn");
+  if (langBtn) {
+    langBtn.textContent = I18N.isEnglish() ? "中文" : "EN";
+    langBtn.title = I18N.isEnglish() ? "切换到中文" : "Switch to English (beta)";
+    langBtn.onclick = () => I18N.toggle();
+  }
   $("#themeBtn").onclick = async () => {
     const mode = (S.config.theme || {}).mode === "dark" ? "light" : "dark";
     await saveConfig({ theme: Object.assign({}, S.config.theme, { mode }) });
@@ -171,7 +196,11 @@ function bindGlobal() {
   if (typeof PAL !== "undefined") PAL.mount();
 
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") { UI.closeModal(); if (typeof PAL !== "undefined") PAL.close(); }
+    if (e.key === "Escape") {
+      UI.closeModal();
+      if (typeof PAL !== "undefined") PAL.close();
+      if (sidebar.classList.contains("open")) { setDrawer(false); menu.focus(); }
+    }
     const typing = /input|textarea|select/i.test((e.target.tagName || "")) || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); si.focus(); return; }
     if (typing) return;
@@ -231,6 +260,7 @@ async function boot() {
   try {
     const b = await API.bootstrap();
     Object.assign(S, b);
+    try { localStorage.setItem("sw_language", (S.config || {}).language || "zh-CN"); } catch (e) { }
     const raw = (location.hash.replace("#", "") || "today");
     const [rid, rpid] = raw.split("/");
     if (rid === "project" && rpid) S.projectId = decodeURIComponent(rpid);
@@ -238,8 +268,10 @@ async function boot() {
     if (!VIEWS[S.route]) S.route = "today";
     S.ready = true;
     applyTheme(); applyBrand();
+    if (typeof I18N !== "undefined") { I18N.observe(); I18N.apply(document.body); }
     await QUOTE.load();
     renderNav(); render(); updateSyncChip(); bindGlobal();
+    if (typeof I18N !== "undefined") I18N.apply(document.body);
     /* 日历与天气：后台取，取到再局部刷新，不阻塞首屏 */
     refreshAmbient();
     API.get("ai/status").then(r => { S.aiStatus = r; if (S.route === "settings") render(); }).catch(() => { });

@@ -1,7 +1,11 @@
 /* 极端测试 6 · 手机布局 + 远程只读界面
    跑之前先起一个测试用的服务：python3 server.py --port 8799 --no-open &     */
 const BASE = process.env.TEST_URL || 'http://127.0.0.1:8799/';
-const { chromium } = require('playwright');
+const BROWSER_NAME = process.env.PW_BROWSER || 'chromium';
+const { [BROWSER_NAME]: chromium } = require('playwright');
+const mobilePage = viewport => BROWSER_NAME === 'firefox'
+  ? { viewport }
+  : { viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
 const FAIL = [];
 const check = (name, cond, extra = '') => {
@@ -23,10 +27,7 @@ const PAGES = ['today', 'hub', 'manuscripts', 'papers', 'conferences',
 
   console.log('\n=== 1. 各种手机尺寸下不横向滚、不遮挡 ===');
   for (const ph of PHONES) {
-    const p = await b.newPage({
-      viewport: { width: ph.width, height: ph.height },
-      isMobile: true, hasTouch: true, deviceScaleFactor: 2,
-    });
+    const p = await b.newPage(mobilePage({ width: ph.width, height: ph.height }));
     const errs = [];
     p.on('pageerror', e => errs.push(e.message));
     await p.goto(BASE);
@@ -52,7 +53,7 @@ const PAGES = ['today', 'hub', 'manuscripts', 'papers', 'conferences',
   }
 
   console.log('\n=== 2. 侧边栏抽屉在手机上能开能关 ===');
-  const p = await b.newPage({ viewport: { width: 375, height: 667 }, isMobile: true, hasTouch: true });
+  const p = await b.newPage(mobilePage({ width: 375, height: 667 }));
   await p.goto(BASE);
   await p.waitForTimeout(1400);
   if (await p.isVisible('#wz')) { await p.evaluate(() => WZ.close()); await p.waitForTimeout(250); }

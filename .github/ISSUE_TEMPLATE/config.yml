@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SuperJayLiu/workspace-for-all/security/advisories/new
+    about: Report vulnerabilities and sensitive security details privately.
+  - name: Usage and installation guide
+    url: https://github.com/SuperJayLiu/workspace-for-all/blob/main/docs/installation.en.md
+    about: Check setup, verification, upgrades, and troubleshooting first.
