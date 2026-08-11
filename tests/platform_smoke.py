@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cross-platform startup smoke test that never writes to the live checkout."""
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -19,9 +20,17 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def fetch(url, attempts=40):
+def fetch(url, attempts=40, proc=None, log_path=None):
     last = None
     for _ in range(attempts):
+        if proc is not None and proc.poll() is not None:
+            details = ""
+            if log_path is not None and log_path.exists():
+                details = log_path.read_text(encoding="utf-8", errors="replace").strip()
+            raise RuntimeError(
+                f"service exited before becoming ready (exit {proc.returncode})"
+                + (f":\n{details}" if details else "")
+            )
         try:
             with urllib.request.urlopen(url, timeout=3) as response:
                 return response.status, response.read()
@@ -44,13 +53,20 @@ def main():
         port = free_port()
         log_path = Path(temporary) / "server.log"
         with log_path.open("w", encoding="utf-8") as log:
+            child_env = dict(os.environ)
+            # Windows runners may otherwise inherit a legacy console encoding;
+            # startup messages and filenames intentionally contain Chinese text.
+            child_env["PYTHONUTF8"] = "1"
+            child_env["PYTHONIOENCODING"] = "utf-8"
             proc = subprocess.Popen(
                 [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port),
                  "--no-open", "--test-mode"],
-                cwd=str(root), stdout=log, stderr=subprocess.STDOUT,
+                cwd=str(root), stdout=log, stderr=subprocess.STDOUT, env=child_env,
             )
             try:
-                status, body = fetch(f"http://127.0.0.1:{port}/api/ping")
+                status, body = fetch(
+                    f"http://127.0.0.1:{port}/api/ping", proc=proc, log_path=log_path
+                )
                 assert status == 200
                 assert json.loads(body.decode("utf-8")).get("ok") is True
 
