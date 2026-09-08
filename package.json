@@ -10,7 +10,7 @@
     "test:smoke": "python3 tests/platform_smoke.py"
   },
   "devDependencies": {
-    "playwright": "1.62.1"
+    "playwright": "1.63.0"
   },
   "engines": {
     "node": ">=20"
